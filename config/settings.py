@@ -16,6 +16,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -93,13 +95,17 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 #
-# PostgreSQL solo si están definidas las 5 variables de conexión; en caso
-# contrario se usa SQLite local (db.sqlite3, ignorado por Git).
+# Regla (PE-6-fix): con las 5 variables DB_* definidas se usa PostgreSQL; con
+# ninguna se usa SQLite local (db.sqlite3, ignorado por Git). Si se define una
+# parte pero no todas, se lanza ImproperlyConfigured listando las faltantes:
+# asumir SQLite en silencio dejaba al panel apuntando a la BD equivocada.
 # La conexión a PostgreSQL real NO está verificada en esta tarea (PE-6).
 
 _POSTGRES_VARS = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT")
 
-if all(os.environ.get(name) for name in _POSTGRES_VARS):
+_POSTGRES_DEFINIDAS = [name for name in _POSTGRES_VARS if os.environ.get(name)]
+
+if len(_POSTGRES_DEFINIDAS) == len(_POSTGRES_VARS):
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
@@ -110,6 +116,17 @@ if all(os.environ.get(name) for name in _POSTGRES_VARS):
             'PORT': os.environ["DB_PORT"],
         }
     }
+elif _POSTGRES_DEFINIDAS:
+    _POSTGRES_FALTANTES = [
+        name for name in _POSTGRES_VARS if name not in _POSTGRES_DEFINIDAS
+    ]
+    raise ImproperlyConfigured(
+        "Configuración de PostgreSQL incompleta: se definieron "
+        + ", ".join(_POSTGRES_DEFINIDAS)
+        + "; faltan "
+        + ", ".join(_POSTGRES_FALTANTES)
+        + ". Define las 5 variables DB_* o ninguna de ellas (SQLite)."
+    )
 else:
     DATABASES = {
         'default': {
