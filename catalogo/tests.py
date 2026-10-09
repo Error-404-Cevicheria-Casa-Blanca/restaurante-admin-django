@@ -8,21 +8,45 @@ from django.conf import settings
 
 RUTA_PROYECTO = str(settings.BASE_DIR)
 
+# Variables que definen la conexión a PostgreSQL (las mismas de config.settings).
+POSTGRES_VARS = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT")
 
-def _importar_settings_en_subproceso(entorno_extra):
-    """Importa config.settings en un proceso limpio, sin variables heredadas."""
+_DB_COMPLETAS = {
+    "DB_NAME": "panel_pruebas",
+    "DB_USER": "panel_pruebas",
+    "DB_PASSWORD": "falsa-clave",
+    "DB_HOST": "localhost",
+    "DB_PORT": "5432",
+}
+
+_CLAVE_PRUEBAS = "clave-solo-pruebas-subproceso-NO-USAR-en-produccion"
+
+
+def _ejecutar_en_subproceso(codigo, entorno_extra):
+    """Ejecuta código Python en un proceso limpio, sin variables heredadas."""
     entorno = dict(os.environ)
-    entorno.pop("DJANGO_SECRET_KEY", None)
-    entorno.pop("DJANGO_DEBUG", None)
+    for nombre in ("DJANGO_SECRET_KEY", "DJANGO_DEBUG", *POSTGRES_VARS):
+        entorno.pop(nombre, None)
     entorno.update(entorno_extra)
     return subprocess.run(
-        [sys.executable, "-c", "import config.settings"],
+        [sys.executable, "-c", codigo],
         capture_output=True,
         text=True,
         cwd=RUTA_PROYECTO,
         env=entorno,
         check=False,
     )
+
+
+def _importar_settings_en_subproceso(entorno_extra):
+    """Importa config.settings en un proceso limpio, sin variables heredadas."""
+    return _ejecutar_en_subproceso("import config.settings", entorno_extra)
+
+
+def _motor_bd_en_subproceso(entorno_extra):
+    """Devuelve el ENGINE de la BD leído en un proceso limpio, o el error."""
+    codigo = "import config.settings as s; print(s.DATABASES['default']['ENGINE'])"
+    return _ejecutar_en_subproceso(codigo, entorno_extra)
 
 
 def test_settings_carga_sin_error():
@@ -56,3 +80,33 @@ def test_clave_de_desarrollo_solo_con_django_debug():
     """Solo con DJANGO_DEBUG=1 se permite importar sin clave explícita."""
     resultado = _importar_settings_en_subproceso({"DJANGO_DEBUG": "1"})
     assert resultado.returncode == 0
+
+
+def test_sin_variables_db_usa_sqlite_en_subproceso():
+    """Sin ninguna variable DB_* la BD por defecto es SQLite local."""
+    resultado = _motor_bd_en_subproceso({"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS})
+    assert resultado.returncode == 0, resultado.stderr
+    assert resultado.stdout.strip() == "django.db.backends.sqlite3"
+
+
+def test_con_las_cinco_variables_db_usa_postgresql():
+    """Con las 5 variables DB_* la BD por defecto es PostgreSQL (sin conectar)."""
+    entorno = {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS, **_DB_COMPLETAS}
+    resultado = _motor_bd_en_subproceso(entorno)
+    assert resultado.returncode == 0, resultado.stderr
+    assert resultado.stdout.strip() == "django.db.backends.postgresql"
+
+
+def test_con_variables_db_parciales_falla_indicando_faltantes():
+    """Con solo 3 de 5 variables DB_* la importación falla listando las faltantes."""
+    parciales = {
+        nombre: _DB_COMPLETAS[nombre]
+        for nombre in ("DB_NAME", "DB_USER", "DB_PASSWORD")
+    }
+    entorno = {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS, **parciales}
+    resultado = _motor_bd_en_subproceso(entorno)
+    assert resultado.returncode != 0
+    salida = resultado.stderr + resultado.stdout
+    assert "ImproperlyConfigured" in salida
+    assert "DB_HOST" in salida
+    assert "DB_PORT" in salida
