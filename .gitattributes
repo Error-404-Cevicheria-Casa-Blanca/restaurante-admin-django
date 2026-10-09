@@ -1,0 +1,4 @@
+# Normaliza finales de línea para todo el repositorio (PE-6-fix).
+# Los scripts .bat de Windows conservan CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
