@@ -29,7 +29,7 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "") == "1"
 # --- Clave secreta -----------------------------------------------------------
 # Obligatoria: no existe valor por defecto en el repositorio. Django la exige
 # para firmar sesiones, tokens CSRF y mensajes. Si falta, Django (y los tests)
-# fallan de forma explícita con KeyError en lugar de usar una clave known.
+# fallan de forma explícita con KeyError en lugar de usar una clave conocida.
 if DEBUG:
     # Excepción única: con DJANGO_DEBUG=1 se admite una clave de desarrollo
     # local, dejándola claramente marcada como NO válida para producción.
