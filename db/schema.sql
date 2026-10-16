@@ -8,7 +8,7 @@ CREATE TABLE rol (
 CREATE TABLE usuario (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
+    clave_hash VARCHAR(255) NOT NULL,
     rol_id INT NOT NULL REFERENCES rol(id) ON DELETE RESTRICT
 );
 

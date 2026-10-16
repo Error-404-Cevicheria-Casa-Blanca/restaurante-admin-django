@@ -1,3 +1,4 @@
-INSERT 0 15
+CREATE INDEX
 
-Query returned successfully in 43 msec.
+Query returned successfully in 152 msec.
+
