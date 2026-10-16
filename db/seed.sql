@@ -20,12 +20,12 @@ INSERT INTO categoria (nombre) VALUES
 ('Entradas'), ('Platos de Fondo'), ('Bebidas'), ('Postres');
 
 -- 4. Productos de Ejemplo
-INSERT INTO producto (nombre, descripcion, precio, disponible, categoria_id) VALUES 
-('Ceviche Clásico', 'Pescado fresco del día con limón.', 48.00, true, 1),
-('Leche de Tigre', 'Concentrado de ceviche.', 25.00, true, 1),
-('Jalea Mixta', 'Fritura de pescados y mariscos.', 55.00, true, 2),
-('Chicha Morada', 'Jarra de 1 litro de chicha.', 15.00, true, 3),
-('Suspiro a la Limeña', 'Clásico postre peruano.', 12.00, true, 4);
+INSERT INTO producto (nombre, descripcion, precio, disponible, categoria_id, imagen_url) VALUES 
+('Ceviche Clásico', 'Pescado fresco del día con limón.', 48.00, true, 1, NULL),
+('Leche de Tigre', 'Concentrado de ceviche.', 25.00, true, 1, NULL),
+('Jalea Mixta', 'Fritura de pescados y mariscos.', 55.00, true, 2, NULL),
+('Chicha Morada', 'Jarra de 1 litro de chicha.', 15.00, true, 3, NULL),
+('Suspiro a la Limeña', 'Clásico postre peruano.', 12.00, true, 4, NULL);
 
 -- 5. Mesas (13 mesas exactas según PE-1, con "piso" en minúscula)
 INSERT INTO mesa (numero, capacidad, ubicacion, estado) VALUES 

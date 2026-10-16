@@ -31,7 +31,8 @@ CREATE TABLE producto (
     descripcion TEXT,
     precio NUMERIC(10,2) NOT NULL CHECK (precio > 0),
     disponible BOOLEAN NOT NULL DEFAULT TRUE,
-    categoria_id INT NOT NULL REFERENCES categoria(id) ON DELETE RESTRICT
+    categoria_id INT NOT NULL REFERENCES categoria(id) ON DELETE RESTRICT,
+    imagen_url VARCHAR(255)
 );
 
 CREATE TABLE pedido (
@@ -47,6 +48,7 @@ CREATE TABLE detalle_pedido (
     id SERIAL PRIMARY KEY,
     pedido_id INT NOT NULL REFERENCES pedido(id) ON DELETE CASCADE,
     producto_id INT NOT NULL REFERENCES producto(id) ON DELETE RESTRICT,
+    precio_unitario NUMERIC(10,2) NOT NULL CHECK (precio_unitario > 0),
     cantidad INT NOT NULL CHECK (cantidad >= 1),
     notas VARCHAR(255),
     subtotal NUMERIC(10,2) NOT NULL CHECK (subtotal >= 0)

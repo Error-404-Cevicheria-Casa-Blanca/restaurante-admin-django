@@ -33,6 +33,7 @@ erDiagram
         numeric precio
         boolean disponible
         int categoria_id FK
+        string imagen_url
     }
     PEDIDO {
         int id PK
@@ -46,6 +47,7 @@ erDiagram
         int id PK
         int pedido_id FK
         int producto_id FK
+        numeric precio_unitario
         int cantidad
         string notas
         numeric subtotal
