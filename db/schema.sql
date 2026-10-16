@@ -38,7 +38,7 @@ CREATE TABLE pedido (
     id SERIAL PRIMARY KEY,
     mesa_id INT NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
     mozo_id INT NOT NULL REFERENCES usuario(id) ON DELETE RESTRICT,
-    estado VARCHAR(20) NOT NULL CHECK (estado IN ('Pendiente', 'Cocinando', 'Listo', 'Servido', 'Cobrado')) DEFAULT 'Pendiente',
+    estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO')) DEFAULT 'PENDIENTE',
     total NUMERIC(10,2) NOT NULL DEFAULT 0.00,
     fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

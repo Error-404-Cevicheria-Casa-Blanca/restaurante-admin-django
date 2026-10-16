@@ -12,7 +12,7 @@ erDiagram
     USUARIO {
         int id PK
         string username UK
-        string password_hash
+        string clave_hash
         int rol_id FK
     }
     MESA {

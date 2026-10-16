@@ -1,7 +1,7 @@
 -- Población inicial de datos
 -- NOTA DE SEGURIDAD: Todos los usuarios tienen la contraseña "password123"
--- Hash BCrypt real (cost 10) validado matemáticamente para "password123":
--- $2a$10$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa
+-- Hash BCrypt real (cost 10) generado con bcrypt.hashpw para "password123":
+-- $2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S
 
 -- 1. Roles (ADMIN en lugar de ADMINISTRADOR)
 INSERT INTO rol (nombre) VALUES 
@@ -9,11 +9,11 @@ INSERT INTO rol (nombre) VALUES
 
 -- 2. Usuarios (Cambiado de password_hash a clave_hash)
 INSERT INTO usuario (username, clave_hash, rol_id) VALUES 
-('admin_test', '$2a$10$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa', 1),
-('mozo_01', '$2a$10$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa', 2),
-('mozo_02', '$2a$10$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa', 2),
-('cocinero_01', '$2a$10$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa', 3),
-('cajero_01', '$2a$10$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa', 4);
+('admin_test', '$2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S', 1),
+('mozo_01', '$2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S', 2),
+('mozo_02', '$2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S', 2),
+('cocinero_01', '$2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S', 3),
+('cajero_01', '$2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S', 4);
 
 -- 3. Categorías (Según PE-8 / API-v1.md)
 INSERT INTO categoria (nombre) VALUES 
