@@ -1,13 +1,13 @@
-psql:db/schema.sql:6: ERROR:  la relaci├│n ┬½rol┬╗ ya existe
-psql:db/schema.sql:13: ERROR:  la relaci├│n ┬½usuario┬╗ ya existe
-psql:db/schema.sql:21: ERROR:  la relaci├│n ┬½mesa┬╗ ya existe
-psql:db/schema.sql:26: ERROR:  la relaci├│n ┬½categoria┬╗ ya existe
-psql:db/schema.sql:35: ERROR:  la relaci├│n ┬½producto┬╗ ya existe
-psql:db/schema.sql:44: ERROR:  la relaci├│n ┬½pedido┬╗ ya existe
-psql:db/schema.sql:53: ERROR:  la relaci├│n ┬½detalle_pedido┬╗ ya existe
-psql:db/schema.sql:56: ERROR:  la relaci├│n ┬½idx_pedido_mesa_estado┬╗ ya existe
-psql:db/schema.sql:57: ERROR:  la relaci├│n ┬½idx_fk_usuario_rol┬╗ ya existe
-psql:db/schema.sql:58: ERROR:  la relaci├│n ┬½idx_fk_producto_categoria┬╗ ya existe
-psql:db/schema.sql:59: ERROR:  la relaci├│n ┬½idx_fk_pedido_mozo┬╗ ya existe
-psql:db/schema.sql:60: ERROR:  la relaci├│n ┬½idx_fk_detalle_pedido┬╗ ya existe
-psql:db/schema.sql:61: ERROR:  la relaci├│n ┬½idx_fk_detalle_producto┬╗ ya existe
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
