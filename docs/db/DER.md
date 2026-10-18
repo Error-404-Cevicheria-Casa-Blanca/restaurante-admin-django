@@ -7,7 +7,7 @@ El siguiente diagrama detalla la estructura relacional centralizada que comparti
 erDiagram
     ROL {
         int id PK
-        string nombre "Administrador, Mozo, Cocinero, Cajero"
+        string nombre "ADMIN, MOZO, COCINERO, CAJERO"
     }
     USUARIO {
         int id PK
@@ -39,7 +39,7 @@ erDiagram
         int id PK
         int mesa_id FK
         int mozo_id FK
-        string estado "Pendiente, Cocinando, Listo, Servido, Cobrado"
+        string estado "PENDIENTE, COCINANDO, LISTO, SERVIDO, COBRADO"
         numeric total
         timestamp fecha_creacion
     }

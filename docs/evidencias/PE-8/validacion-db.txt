@@ -1,4 +1,0 @@
-CREATE INDEX
-
-Query returned successfully in 152 msec.
-
