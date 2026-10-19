@@ -7,7 +7,7 @@ El siguiente diagrama detalla la estructura relacional centralizada que comparti
 erDiagram
     ROL {
         int id PK
-        string nombre "ADMIN, MOZO, COCINERO, CAJERO"
+        string nombre UK "ADMIN, MOZO, COCINERO, CAJERO"
     }
     USUARIO {
         int id PK
@@ -24,7 +24,7 @@ erDiagram
     }
     CATEGORIA {
         int id PK
-        string nombre
+        string nombre UK
     }
     PRODUCTO {
         int id PK
@@ -59,3 +59,4 @@ erDiagram
     USUARIO ||--o{ PEDIDO : "registra (Mozo)"
     PEDIDO ||--|{ DETALLE_PEDIDO : "contiene"
     PRODUCTO ||--o{ DETALLE_PEDIDO : "incluye"
+```
