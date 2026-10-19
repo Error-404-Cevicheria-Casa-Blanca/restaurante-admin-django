@@ -1,0 +1,25 @@
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+              Listado de tablas
+ Esquema |     Nombre     | Tipo  |   Due    
+---------+----------------+-------+----------
+ public  | categoria      | tabla | postgres
+ public  | detalle_pedido | tabla | postgres
+ public  | mesa           | tabla | postgres
+ public  | pedido         | tabla | postgres
+ public  | producto       | tabla | postgres
+ public  | rol            | tabla | postgres
+ public  | usuario        | tabla | postgres
+(7 filas)
+
