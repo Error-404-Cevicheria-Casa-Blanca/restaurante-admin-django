@@ -1,10 +1,19 @@
-"""Pruebas del esqueleto PE-6: la configuración por entorno carga correctamente."""
+"""Pruebas del esqueleto PE-6 y del módulo de catálogo de platos PE-19."""
 
 import os
 import subprocess
 import sys
+from decimal import Decimal
+from unittest.mock import MagicMock
 
 from django.conf import settings
+from django.contrib.admin.sites import AdminSite
+from django.core.exceptions import ValidationError
+from django.db import connection
+from django.test import TestCase
+
+from catalogo.admin import CategoriaAdmin, ProductoAdmin
+from catalogo.models import Categoria, Producto
 
 RUTA_PROYECTO = str(settings.BASE_DIR)
 
@@ -110,3 +119,204 @@ def test_con_variables_db_parciales_falla_indicando_faltantes():
     assert "ImproperlyConfigured" in salida
     assert "DB_HOST" in salida
     assert "DB_PORT" in salida
+
+
+# =============================================================================
+# Pruebas del módulo de catálogo, precios y stock del día (PE-19)
+# =============================================================================
+
+
+def _crear_tablas_unmanaged_si_no_existen():
+    """Crea las tablas de categoria y producto si no existen en la BD de pruebas.
+
+    Aplica para entornos de prueba en memoria (SQLite) para respetar la regla D7
+    (DDL Ownership) sin alterar el esquema compartido en PostgreSQL.
+    """
+    with connection.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS categoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre VARCHAR(100) NOT NULL UNIQUE
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS producto (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre VARCHAR(150) NOT NULL,
+                descripcion TEXT,
+                precio NUMERIC(10, 2) NOT NULL,
+                disponible BOOLEAN NOT NULL DEFAULT 1,
+                categoria_id INTEGER NOT NULL REFERENCES categoria(id),
+                imagen_url VARCHAR(255)
+            );
+        """)
+
+
+class CatalogoModelTests(TestCase):
+    """Pruebas unitarias para los modelos Categoria y Producto (PE-19)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        _crear_tablas_unmanaged_si_no_existen()
+
+    def setUp(self):
+        self.categoria = Categoria.objects.create(nombre="Platos Marinos")
+
+    def test_creacion_categoria_y_str(self):
+        """Verifica la persistencia y representación en texto de Categoria."""
+        self.assertEqual(str(self.categoria), "Platos Marinos")
+        self.assertEqual(self.categoria.nombre, "Platos Marinos")
+
+    def test_alta_plato_marino(self):
+        """Alcance PE-19: Alta de plato marino con información completa."""
+        plato = Producto.objects.create(
+            nombre="Ceviche Mixto Especial",
+            descripcion=(
+                "Pescado fresco del día, langostinos, calamar y pulpo con camote y choclo."
+            ),
+            precio=Decimal("52.50"),
+            disponible=True,
+            categoria=self.categoria,
+            imagen_url="https://ejemplo.com/ceviche-mixto.jpg",
+        )
+        self.assertIsNotNone(plato.id)
+        self.assertEqual(plato.nombre, "Ceviche Mixto Especial")
+        self.assertEqual(plato.precio, Decimal("52.50"))
+        self.assertTrue(plato.disponible)
+        self.assertEqual(plato.categoria, self.categoria)
+        self.assertEqual(str(plato), "Ceviche Mixto Especial (S/ 52.50)")
+
+    def test_validacion_precio_debe_ser_positivo(self):
+        """Alcance PE-19: El precio debe ser estrictamente mayor a 0 (MinValueValidator)."""
+        plato_cero = Producto(
+            nombre="Plato Inválido Cero",
+            precio=Decimal("0.00"),
+            categoria=self.categoria,
+        )
+        with self.assertRaises(ValidationError):
+            plato_cero.full_clean()
+
+        plato_negativo = Producto(
+            nombre="Plato Inválido Negativo",
+            precio=Decimal("-15.00"),
+            categoria=self.categoria,
+        )
+        with self.assertRaises(ValidationError):
+            plato_negativo.full_clean()
+
+    def test_actualizacion_de_precios(self):
+        """Alcance PE-19: Actualización individual o por lote del precio del plato."""
+        plato = Producto.objects.create(
+            nombre="Tiradito Nikkei",
+            precio=Decimal("45.00"),
+            categoria=self.categoria,
+        )
+        plato.precio = Decimal("49.00")
+        plato.save()
+
+        plato_actualizado = Producto.objects.get(id=plato.id)
+        self.assertEqual(plato_actualizado.precio, Decimal("49.00"))
+
+    def test_control_stock_pesca_del_dia(self):
+        """Alcance PE-19: Activación y desactivación de disponibilidad según pesca del día."""
+        plato = Producto.objects.create(
+            nombre="Corvina a la Plancha",
+            precio=Decimal("58.00"),
+            disponible=True,
+            categoria=self.categoria,
+        )
+        self.assertTrue(plato.disponible)
+
+        # Se agota la pesca del día: desactivar plato
+        plato.disponible = False
+        plato.save()
+
+        plato_recargado = Producto.objects.get(id=plato.id)
+        self.assertFalse(plato_recargado.disponible)
+
+        # Llega nueva captura del día: reactivar plato
+        plato_recargado.disponible = True
+        plato_recargado.save()
+
+        self.assertTrue(Producto.objects.get(id=plato.id).disponible)
+
+    def test_relacion_categoria_productos(self):
+        """Verifica la relación inversa entre categoría y productos."""
+        p1 = Producto.objects.create(
+            nombre="Arroz con Mariscos",
+            precio=Decimal("48.00"),
+            categoria=self.categoria,
+        )
+        p2 = Producto.objects.create(
+            nombre="Chaufa de Mariscos",
+            precio=Decimal("46.00"),
+            categoria=self.categoria,
+        )
+        productos_categoria = list(self.categoria.productos.all())
+        self.assertIn(p1, productos_categoria)
+        self.assertIn(p2, productos_categoria)
+        self.assertEqual(self.categoria.productos.count(), 2)
+
+
+class CatalogoAdminTests(TestCase):
+    """Pruebas unitarias para las acciones y vistas de Django Admin (PE-19)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        _crear_tablas_unmanaged_si_no_existen()
+
+    def setUp(self):
+        self.site = AdminSite()
+        self.categoria_admin = CategoriaAdmin(Categoria, self.site)
+        self.producto_admin = ProductoAdmin(Producto, self.site)
+        self.categoria = Categoria.objects.create(nombre="Marinos Admin")
+        self.plato1 = Producto.objects.create(
+            nombre="Parihuela Especial",
+            precio=Decimal("55.00"),
+            disponible=True,
+            categoria=self.categoria,
+        )
+        self.plato2 = Producto.objects.create(
+            nombre="Sudado de Pescado",
+            precio=Decimal("50.00"),
+            disponible=True,
+            categoria=self.categoria,
+        )
+
+    def test_admin_categoria_total_productos(self):
+        """Verifica el cálculo de total de platos por categoría en admin."""
+        self.assertEqual(
+            self.categoria_admin.total_productos(self.categoria),
+            2,
+        )
+
+    def test_accion_admin_marcar_no_disponible_pesca_dia(self):
+        """Acción masiva: marcar platos como agotados/no disponibles."""
+        request = MagicMock()
+        qs = Producto.objects.filter(id__in=[self.plato1.id, self.plato2.id])
+
+        self.producto_admin.marcar_no_disponible_pesca_dia(request, qs)
+
+        self.plato1.refresh_from_db()
+        self.plato2.refresh_from_db()
+        self.assertFalse(self.plato1.disponible)
+        self.assertFalse(self.plato2.disponible)
+
+    def test_accion_admin_marcar_disponible_pesca_dia(self):
+        """Acción masiva: reactivar platos con stock disponible por pesca del día."""
+        self.plato1.disponible = False
+        self.plato1.save()
+        self.plato2.disponible = False
+        self.plato2.save()
+
+        request = MagicMock()
+        qs = Producto.objects.filter(id__in=[self.plato1.id, self.plato2.id])
+
+        self.producto_admin.marcar_disponible_pesca_dia(request, qs)
+
+        self.plato1.refresh_from_db()
+        self.plato2.refresh_from_db()
+        self.assertTrue(self.plato1.disponible)
+        self.assertTrue(self.plato2.disponible)
