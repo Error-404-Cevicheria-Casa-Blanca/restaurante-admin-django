@@ -1,0 +1,6 @@
+# Dependencias de desarrollo / pruebas (PE-6)
+# Versiones fijadas (==) verificadas en PyPI el 2026-10-09.
+-r requirements.txt
+pytest-django==4.14.0
+coverage==7.16.2
+flake8==7.4.1
