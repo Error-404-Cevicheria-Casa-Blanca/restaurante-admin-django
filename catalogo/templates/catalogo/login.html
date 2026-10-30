@@ -1,0 +1,48 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iniciar Sesión · La Casa Blanca</title>
+  <link rel="icon" type="image/png" href="{% static 'catalogo/img/logo.png' %}">
+  <link rel="stylesheet" href="{% static 'catalogo/css/panel.css' %}">
+</head>
+<body>
+  <div class="login-shell">
+    <div class="login-card">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:22px;">
+        <img src="{% static 'catalogo/img/logo.png' %}" alt="Logo La Casa Blanca" class="login-logo-img">
+        <div>
+          <h1 style="margin:0;font-size:19px;font-weight:700;color:#0f172a;">La Casa Blanca</h1>
+          <p style="margin:2px 0 0;font-size:12.5px;color:#64748b;">Panel administrativo de carta y pesca del día</p>
+        </div>
+      </div>
+
+      {% if error %}
+      <div class="flash-msg error" style="margin-bottom:16px;">
+        <span>{{ error }}</span>
+      </div>
+      {% endif %}
+
+      <form method="post" action="{% url 'catalogo:login' %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="form-group" style="margin-bottom:14px;">
+          <label class="form-label" for="id_username">Usuario administrativo</label>
+          <input id="id_username" name="username" type="text" class="form-input" placeholder="Ej. AdminJerardo" required autofocus>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px;">
+          <label class="form-label" for="id_password">Contraseña</label>
+          <input id="id_password" name="password" type="password" class="form-input" placeholder="••••••••" required>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:11px;">
+          Ingresar al panel
+        </button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

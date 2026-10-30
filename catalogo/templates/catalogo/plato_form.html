@@ -1,0 +1,84 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}{% if modo_edicion %}Editar Plato{% else %}Nuevo Plato{% endif %}{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">
+      {% if modo_edicion %}Editar plato: {{ plato.nombre }}{% else %}Registrar nuevo plato marino{% endif %}
+    </h1>
+    <p class="page-subtitle">
+      Completa la información de carta, precio en soles (S/) y disponibilidad del día
+    </p>
+  </div>
+  <div class="header-controls">
+    <a href="{% url 'catalogo:platos_list' %}" class="btn btn-outline">Volver al catálogo</a>
+  </div>
+</header>
+
+<section class="card" style="max-width:740px;">
+  {% if not categorias_existen %}
+  <div class="empty-state">
+    <h3>Aún no existen categorías registradas</h3>
+    <p>Antes de registrar un plato necesitas crear al menos una categoría marina.</p>
+    <a href="{% url 'catalogo:categorias' %}" class="btn btn-primary" style="margin-top:10px;">
+      Ir a Categorías
+    </a>
+  </div>
+  {% else %}
+  <form method="post" novalidate>
+    {% csrf_token %}
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="form-label" for="{{ form.nombre.id_for_label }}">Nombre del plato *</label>
+        {{ form.nombre }}
+        {% for err in form.nombre.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="{{ form.categoria.id_for_label }}">Categoría marina *</label>
+        {{ form.categoria }}
+        {% for err in form.categoria.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="{{ form.precio.id_for_label }}">Precio en soles (S/) *</label>
+        {{ form.precio }}
+        <span class="form-help">Monto mayor a S/ 0.00 (hasta dos decimales).</span>
+        {% for err in form.precio.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label" for="{{ form.descripcion.id_for_label }}">Descripción del plato</label>
+        {{ form.descripcion }}
+        {% for err in form.descripcion.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label" for="{{ form.imagen_url.id_for_label }}">URL de imagen referencial (opcional)</label>
+        {{ form.imagen_url }}
+        {% for err in form.imagen_url.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group full">
+        <label class="checkbox-row">
+          {{ form.disponible }}
+          <div>
+            <div style="font-weight:600;color:#0f172a;">Disponible según pesca del día</div>
+            <div class="form-help">Desmarca esta casilla si el insumo marino está agotado hoy.</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:22px;">
+      <a href="{% url 'catalogo:platos_list' %}" class="btn btn-outline">Cancelar</a>
+      <button type="submit" class="btn btn-primary">
+        {% if modo_edicion %}Guardar cambios{% else %}Registrar plato{% endif %}
+      </button>
+    </div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

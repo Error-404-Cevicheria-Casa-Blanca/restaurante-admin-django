@@ -1,0 +1,109 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Categorías de Carta{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Categorías Marinas</h1>
+    <p class="page-subtitle">
+      Organización de secciones de la carta (Entradas, Ceviches, Fondos, Bebidas y Postres)
+    </p>
+  </div>
+  <div class="header-controls">
+    <a href="{% url 'catalogo:platos_list' %}" class="btn btn-outline">Ir a Platos</a>
+  </div>
+</header>
+
+<section class="charts-grid" style="grid-template-columns:1fr 2fr;">
+  <!-- Alta de Categoría -->
+  <div class="card" style="align-self:start;">
+    <div class="card-header">
+      <h2 class="card-title">Nueva categoría</h2>
+    </div>
+    <form method="post" action="{% url 'catalogo:categorias' %}" novalidate>
+      {% csrf_token %}
+      <div class="form-group" style="margin-bottom:14px;">
+        <label class="form-label" for="{{ form.nombre.id_for_label }}">Nombre de la categoría *</label>
+        {{ form.nombre }}
+        {% for err in form.nombre.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">
+        Crear categoría
+      </button>
+    </form>
+  </div>
+
+  <!-- Tabla de Categorías Existentes -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Categorías registradas</h2>
+      <span class="card-meta">{{ categorias|length }} en total</span>
+    </div>
+
+    {% if categorias %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Nombre de categoría</th>
+            <th>Platos</th>
+            <th>Disponibles</th>
+            <th>Precio prom.</th>
+            <th style="text-align:right;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cat in categorias %}
+          <tr>
+            <td>
+              <form method="post" action="{% url 'catalogo:categoria_edit' cat.id %}" class="price-inline-form">
+                {% csrf_token %}
+                <input type="text"
+                       name="nombre"
+                       value="{{ cat.nombre }}"
+                       class="form-input"
+                       style="padding:6px 10px;width:210px;"
+                       aria-label="Nombre de {{ cat.nombre }}">
+                <button type="submit" class="btn btn-sm btn-outline">Renombrar</button>
+              </form>
+            </td>
+            <td><strong>{{ cat.total_platos }}</strong></td>
+            <td>
+              <span class="badge-trend {% if cat.agotados == 0 and cat.total_platos > 0 %}up{% elif cat.disponibles == 0 and cat.total_platos > 0 %}warn{% else %}neutral{% endif %}">
+                {{ cat.disponibles }} disp. / {{ cat.agotados }} agot.
+              </span>
+            </td>
+            <td style="font-variant-numeric:tabular-nums;font-weight:600;">
+              {% if cat.precio_promedio %}S/ {{ cat.precio_promedio|floatformat:2 }}{% else %}—{% endif %}
+            </td>
+            <td style="text-align:right;white-space:nowrap;">
+              <a href="{% url 'catalogo:plato_create' %}?categoria={{ cat.id }}" class="btn btn-sm btn-outline">
+                + Plato
+              </a>
+              <form method="post"
+                    action="{% url 'catalogo:categoria_delete' cat.id %}"
+                    style="display:inline;"
+                    onsubmit="return confirm('¿Eliminar la categoría «{{ cat.nombre|escapejs }}»?');">
+                {% csrf_token %}
+                <button type="submit"
+                        class="btn btn-sm btn-danger-soft"
+                        {% if cat.total_platos > 0 %}title="Contiene platos asociados"{% endif %}>
+                  Eliminar
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <h3>Sin categorías registradas</h3>
+      <p>Crea tu primera categoría en el formulario izquierdo.</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

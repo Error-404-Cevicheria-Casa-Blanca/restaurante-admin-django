@@ -1,0 +1,255 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Catálogo de Platos{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Platos Marinos</h1>
+    <p class="page-subtitle">
+      Alta de platos, actualización directa de precios (S/) y control de stock diario
+    </p>
+  </div>
+
+  <div class="header-controls">
+    <form method="post" action="{% url 'catalogo:seed_demo' %}" style="margin:0;">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button type="submit" class="btn btn-outline">Cargar carta demo</button>
+    </form>
+
+    <button type="button" class="btn btn-primary" data-open-modal="modal-crear-plato">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+      Nuevo plato
+    </button>
+  </div>
+</header>
+
+<!-- Tira Resumen Rápida -->
+<section class="summary-strip">
+  <div class="strip-item">
+    Total carta: <strong id="kpi-total-platos">{{ resumen.total_platos }}</strong> platos
+  </div>
+  <div class="strip-item">
+    Disponibles hoy: <strong id="kpi-disponibles" style="color:#059669;">{{ resumen.platos_disponibles }}</strong>
+    (<span id="kpi-pct-disponibles">{{ resumen.pct_disponibles }}%</span>)
+  </div>
+  <div class="strip-item">
+    Agotados: <strong id="kpi-agotados" style="color:#d97706;">{{ resumen.platos_agotados }}</strong>
+    (<span id="kpi-pct-agotados">{{ resumen.pct_agotados }}%</span>)
+  </div>
+  <div class="strip-item">
+    Precio promedio: <strong id="kpi-precio-promedio">S/ {{ resumen.precio_promedio|floatformat:2 }}</strong>
+  </div>
+  <div class="strip-item">
+    Mostrando: <strong>{{ total_filtrado }}</strong> resultado(s)
+  </div>
+</section>
+
+<!-- Barra de Búsqueda y Filtros -->
+<form method="get" class="toolbar-card">
+  <div class="search-box">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+    </svg>
+    <input type="text" name="q" value="{{ busqueda }}" placeholder="Buscar plato o ingrediente...">
+  </div>
+
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <select name="categoria" class="form-select" style="width:auto;padding:7px 12px;font-size:13px;">
+      <option value="">Todas las categorías</option>
+      {% for cat in categorias %}
+      <option value="{{ cat.id }}" {% if categoria_activa == cat.id %}selected{% endif %}>
+        {{ cat.nombre }} ({{ cat.total_platos }})
+      </option>
+      {% endfor %}
+    </select>
+
+    <select name="estado" class="form-select" style="width:auto;padding:7px 12px;font-size:13px;">
+      <option value="todos" {% if estado_filtro == 'todos' %}selected{% endif %}>Todos los estados</option>
+      <option value="disponibles" {% if estado_filtro == 'disponibles' %}selected{% endif %}>Solo disponibles</option>
+      <option value="agotados" {% if estado_filtro == 'agotados' %}selected{% endif %}>Solo agotados</option>
+    </select>
+
+    <select name="orden" class="form-select" style="width:auto;padding:7px 12px;font-size:13px;">
+      <option value="categoria" {% if orden == 'categoria' %}selected{% endif %}>Ordenar por categoría</option>
+      <option value="nombre" {% if orden == 'nombre' %}selected{% endif %}>Nombre (A-Z)</option>
+      <option value="precio_asc" {% if orden == 'precio_asc' %}selected{% endif %}>Menor precio</option>
+      <option value="precio_desc" {% if orden == 'precio_desc' %}selected{% endif %}>Mayor precio</option>
+    </select>
+
+    <button type="submit" class="btn btn-outline">Filtrar</button>
+    {% if busqueda or categoria_activa or estado_filtro != 'todos' %}
+    <a href="{% url 'catalogo:platos_list' %}" class="btn btn-outline">Limpiar</a>
+    {% endif %}
+  </div>
+</form>
+
+<!-- Tabla Principal de Catálogo -->
+<section class="card">
+  <!-- Formulario independiente para acciones por lote (asociado vía atributo form="") -->
+  <form id="bulk-platos-form" method="post" action="{% url 'catalogo:platos_bulk_action' %}"
+        style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span class="card-meta" style="font-weight:600;">Acciones por lote (pesca del día):</span>
+      <button type="submit" name="accion" value="marcar_disponible" class="btn btn-sm btn-success-soft">
+        Activar seleccionados
+      </button>
+      <button type="submit" name="accion" value="marcar_agotado" class="btn btn-sm btn-warning-soft">
+        Marcar agotados
+      </button>
+    </div>
+    <a href="{% url 'catalogo:plato_create' %}" class="card-link">+ Formulario completo</a>
+  </form>
+
+  {% if platos %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:36px;">
+            <input type="checkbox" id="select-all-platos" class="form-checkbox" aria-label="Seleccionar todos">
+          </th>
+          <th>Plato marino</th>
+          <th>Categoría</th>
+          <th>Precio en carta (S/)</th>
+          <th>Pesca del día</th>
+          <th style="text-align:right;">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for plato in platos %}
+        <tr>
+          <td>
+            <input type="checkbox"
+                   name="plato_ids"
+                   value="{{ plato.id }}"
+                   form="bulk-platos-form"
+                   class="form-checkbox plato-row-check"
+                   aria-label="Seleccionar {{ plato.nombre }}">
+          </td>
+          <td>
+            <div class="dish-name">{{ plato.nombre }}</div>
+            {% if plato.descripcion %}
+            <div class="dish-desc">{{ plato.descripcion }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="cat-chip">{{ plato.categoria.nombre }}</span>
+          </td>
+          <td>
+            <form method="post" action="{% url 'catalogo:plato_update_price' plato.id %}" class="price-inline-form">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <span class="price-prefix">S/</span>
+              <input type="number"
+                     name="precio"
+                     step="0.10"
+                     min="0.01"
+                     value="{{ plato.precio|stringformat:'.2f' }}"
+                     class="price-input"
+                     aria-label="Precio de {{ plato.nombre }}">
+              <button type="submit" class="btn btn-sm btn-outline" title="Guardar precio">Guardar</button>
+            </form>
+          </td>
+          <td>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <form method="post"
+                    action="{% url 'catalogo:plato_toggle' plato.id %}"
+                    class="stock-toggle-form"
+                    data-ajax-toggle="true"
+                    data-plato-id="{{ plato.id }}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <button type="submit"
+                        class="switch-btn {% if plato.disponible %}is-on{% endif %}"
+                        aria-label="Alternar disponibilidad de {{ plato.nombre }}"></button>
+              </form>
+              <span class="status-badge {% if plato.disponible %}is-available{% else %}is-soldout{% endif %}"
+                    data-status-badge="{{ plato.id }}">
+                {% if plato.disponible %}Disponible{% else %}Agotado{% endif %}
+              </span>
+            </div>
+          </td>
+          <td style="text-align:right;white-space:nowrap;">
+            <a href="{% url 'catalogo:plato_edit' plato.id %}" class="btn btn-sm btn-outline">Editar</a>
+            <form method="post"
+                  action="{% url 'catalogo:plato_delete' plato.id %}"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Eliminar «{{ plato.nombre|escapejs }}» del catálogo?');">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <button type="submit" class="btn btn-sm btn-danger-soft">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <h3>No se encontraron platos con este criterio</h3>
+    <p>Prueba limpiando los filtros o registra un nuevo plato marino en la carta.</p>
+  </div>
+  {% endif %}
+</section>
+
+<!-- Modal Nuevo Plato -->
+<div id="modal-crear-plato" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-crear-plato-title">
+  <div class="modal-card">
+    <div class="card-header" style="margin-bottom:16px;">
+      <h2 id="modal-crear-plato-title" class="card-title" style="font-size:17px;">Alta rápida de plato marino</h2>
+      <button type="button" class="flash-close" data-close-modal aria-label="Cerrar">&times;</button>
+    </div>
+
+    {% if categorias %}
+    <form method="post" action="{% url 'catalogo:plato_create' %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label" for="{{ form_plato.nombre.id_for_label }}">Nombre del plato *</label>
+          {{ form_plato.nombre }}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="{{ form_plato.categoria.id_for_label }}">Categoría *</label>
+          {{ form_plato.categoria }}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="{{ form_plato.precio.id_for_label }}">Precio (S/) *</label>
+          {{ form_plato.precio }}
+        </div>
+        <div class="form-group full">
+          <label class="form-label" for="{{ form_plato.descripcion.id_for_label }}">Descripción</label>
+          {{ form_plato.descripcion }}
+        </div>
+        <div class="form-group full">
+          <label class="form-label" for="{{ form_plato.imagen_url.id_for_label }}">URL de imagen (opcional)</label>
+          {{ form_plato.imagen_url }}
+        </div>
+        <div class="form-group full">
+          <label class="checkbox-row">
+            {{ form_plato.disponible }}
+            <span><strong>Disponible hoy</strong> según pesca del día</span>
+          </label>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
+        <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Registrar plato</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="empty-state">
+      <p>Crea primero una categoría para asociar tus platos marinos.</p>
+      <a href="{% url 'catalogo:categorias' %}" class="btn btn-primary">Crear categoría</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

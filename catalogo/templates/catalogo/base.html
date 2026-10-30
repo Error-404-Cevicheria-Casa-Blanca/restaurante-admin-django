@@ -1,0 +1,116 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Panel de Gestión{% endblock %} · La Casa Blanca</title>
+  <link rel="icon" type="image/png" href="{% static 'catalogo/img/logo.png' %}">
+  <link rel="stylesheet" href="{% static 'catalogo/css/panel.css' %}">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Barra Lateral Oscura -->
+    <aside class="sidebar">
+      <a href="{% url 'catalogo:dashboard' %}" class="sidebar-brand">
+        <img src="{% static 'catalogo/img/logo.png' %}" alt="Logo La Casa Blanca" class="brand-logo-img">
+        <div>
+          <div class="brand-title">La Casa Blanca</div>
+          <div class="brand-subtitle">Panel de gestión · Carta</div>
+        </div>
+      </a>
+
+      <nav class="sidebar-nav" aria-label="Navegación principal">
+        <div class="nav-section-label">General</div>
+        <a href="{% url 'catalogo:dashboard' %}" class="nav-link {% if nav_active == 'dashboard' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+            <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+          </svg>
+          <span>Dashboard</span>
+        </a>
+
+        <div class="nav-section-label">Catálogo</div>
+        <a href="{% url 'catalogo:platos_list' %}" class="nav-link {% if nav_active == 'platos' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 11h18"/>
+            <path d="M5 11a7 7 0 0 1 14 0"/>
+            <path d="M12 4v0"/>
+            <path d="M4 15h16"/>
+            <path d="M7 19h10"/>
+          </svg>
+          <span>Platos Marinos</span>
+        </a>
+
+        <a href="{% url 'catalogo:pesca_dia' %}" class="nav-link {% if nav_active == 'pesca' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v4"/>
+            <path d="M12 18v4"/>
+            <path d="m4.93 4.93 2.83 2.83"/>
+            <path d="m16.24 16.24 2.83 2.83"/>
+            <path d="M2 12h4"/>
+            <path d="M18 12h4"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+          <span>Pesca del Día</span>
+        </a>
+
+        <a href="{% url 'catalogo:categorias' %}" class="nav-link {% if nav_active == 'categorias' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 6h16"/>
+            <path d="M4 12h16"/>
+            <path d="M4 18h10"/>
+          </svg>
+          <span>Categorías</span>
+        </a>
+
+        <div class="nav-section-label">Configuración</div>
+        <a href="{% url 'admin:index' %}" class="nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.77 1.02 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+          </svg>
+          <span>Administración</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-pill">
+          <div class="user-meta">
+            <div class="user-avatar">
+              {{ request.user.username|slice:":1"|upper }}
+            </div>
+            <div>
+              <div class="user-name">{{ request.user.username }}</div>
+              <div class="user-role">Administrador</div>
+            </div>
+          </div>
+          <form method="post" action="{% url 'catalogo:logout' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn-logout" title="Cerrar sesión">Salir</button>
+          </form>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Contenido Principal -->
+    <main class="main-area">
+      {% if messages %}
+      <div class="flash-stack" role="status">
+        {% for message in messages %}
+        <div class="flash-msg {{ message.tags }}">
+          <span>{{ message }}</span>
+          <button type="button" class="flash-close" onclick="this.parentElement.remove()" aria-label="Cerrar">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <script src="{% static 'catalogo/js/panel.js' %}"></script>
+</body>
+</html>
