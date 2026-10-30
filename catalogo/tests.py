@@ -320,3 +320,142 @@ class CatalogoAdminTests(TestCase):
         self.plato2.refresh_from_db()
         self.assertTrue(self.plato1.disponible)
         self.assertTrue(self.plato2.disponible)
+
+
+class CatalogoWebPanelTests(TestCase):
+    """Pruebas integrales de la interfaz web moderna de catálogo (PRB-19)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        _crear_tablas_unmanaged_si_no_existen()
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="admin_carta",
+            password="ClaveSegura!2026",
+            is_staff=True,
+        )
+        self.normal_user = User.objects.create_user(
+            username="invitado",
+            password="ClaveSegura!2026",
+            is_staff=False,
+        )
+        self.cat_entradas = Categoria.objects.create(nombre="Entradas")
+        self.cat_fondos = Categoria.objects.create(nombre="Platos de Fondo")
+        self.plato_disp = Producto.objects.create(
+            nombre="Ceviche Clásico",
+            precio=Decimal("48.00"),
+            disponible=True,
+            categoria=self.cat_entradas,
+        )
+        self.plato_agot = Producto.objects.create(
+            nombre="Jalea Real",
+            precio=Decimal("58.00"),
+            disponible=False,
+            categoria=self.cat_fondos,
+        )
+
+    def test_acceso_protegido_redirige_a_login(self):
+        """Usuarios anónimos o sin is_staff son redirigidos al login del panel."""
+        resp_anon = self.client.get("/")
+        self.assertEqual(resp_anon.status_code, 302)
+        self.assertIn("/login/", resp_anon["Location"])
+
+        self.client.force_login(self.normal_user)
+        resp_no_staff = self.client.get("/platos/")
+        self.assertEqual(resp_no_staff.status_code, 302)
+        self.assertIn("/login/", resp_no_staff["Location"])
+
+    def test_dashboard_calcula_kpis_reales_prb19(self):
+        """El dashboard muestra conteos, disponibilidad y precios reales de carta."""
+        self.client.force_login(self.staff_user)
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["total_platos"], 2)
+        self.assertEqual(resp.context["platos_disponibles"], 1)
+        self.assertEqual(resp.context["platos_agotados"], 1)
+        self.assertEqual(resp.context["pct_disponibles"], 50.0)
+        self.assertEqual(resp.context["precio_promedio"], Decimal("53.00"))
+        self.assertContains(resp, "Ceviche Clásico")
+
+    def test_alta_y_edicion_plato_desde_panel_web(self):
+        """Permite dar de alta un nuevo plato marino y rechaza precios inválidos."""
+        self.client.force_login(self.staff_user)
+        resp_invalido = self.client.post(
+            "/platos/nuevo/",
+            {
+                "nombre": "Plato Precio Cero",
+                "categoria": self.cat_entradas.id,
+                "precio": "0.00",
+                "disponible": "on",
+            },
+        )
+        self.assertEqual(resp_invalido.status_code, 200)
+        self.assertFalse(
+            Producto.objects.filter(nombre="Plato Precio Cero").exists()
+        )
+
+        resp_ok = self.client.post(
+            "/platos/nuevo/",
+            {
+                "nombre": "Tiradito al Ají Amarillo",
+                "categoria": self.cat_entradas.id,
+                "descripcion": "Láminas de pescado del día.",
+                "precio": "46.50",
+                "disponible": "on",
+            },
+        )
+        self.assertEqual(resp_ok.status_code, 302)
+        creado = Producto.objects.get(nombre="Tiradito al Ají Amarillo")
+        self.assertEqual(creado.precio, Decimal("46.50"))
+        self.assertTrue(creado.disponible)
+
+    def test_actualizacion_rapida_precio_y_toggle_pesca_dia_json(self):
+        """Soporta cambio rápido de precio y switch JSON de pesca del día."""
+        self.client.force_login(self.staff_user)
+        resp_precio = self.client.post(
+            f"/platos/{self.plato_disp.id}/actualizar-precio/",
+            {"precio": "51.90"},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_precio.status_code, 200)
+        self.plato_disp.refresh_from_db()
+        self.assertEqual(self.plato_disp.precio, Decimal("51.90"))
+
+        resp_toggle = self.client.post(
+            f"/platos/{self.plato_disp.id}/toggle-disponibilidad/",
+            {},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_toggle.status_code, 200)
+        datos = resp_toggle.json()
+        self.assertTrue(datos["ok"])
+        self.assertFalse(datos["disponible"])
+        self.plato_disp.refresh_from_db()
+        self.assertFalse(self.plato_disp.disponible)
+
+    def test_acciones_lote_y_proteccion_borrado_categoria(self):
+        """Ejecuta acciones por lote e impide borrar categorías con platos."""
+        self.client.force_login(self.staff_user)
+        self.client.post(
+            "/platos/accion-masiva/",
+            {
+                "accion": "marcar_disponible",
+                "plato_ids": [str(self.plato_agot.id)],
+            },
+        )
+        self.plato_agot.refresh_from_db()
+        self.assertTrue(self.plato_agot.disponible)
+
+        self.client.post(f"/categorias/{self.cat_entradas.id}/eliminar/")
+        self.assertTrue(
+            Categoria.objects.filter(pk=self.cat_entradas.id).exists()
+        )
+
+        cat_vacia = Categoria.objects.create(nombre="Bebidas Temporales")
+        self.client.post(f"/categorias/{cat_vacia.id}/eliminar/")
+        self.assertFalse(Categoria.objects.filter(pk=cat_vacia.id).exists())

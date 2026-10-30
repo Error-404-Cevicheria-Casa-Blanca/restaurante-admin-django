@@ -1,0 +1,110 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Pesca del Día{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Control de Pesca del Día</h1>
+    <p class="page-subtitle">
+      Activa o desactiva rápidamente los platos disponibles antes y durante el turno según el ingreso de insumos
+    </p>
+  </div>
+  <div class="header-controls">
+    <a href="{% url 'catalogo:platos_list' %}" class="btn btn-outline">Ver tabla completa</a>
+    <a href="{% url 'catalogo:plato_create' %}" class="btn btn-primary">+ Nuevo plato</a>
+  </div>
+</header>
+
+<section class="summary-strip">
+  <div class="strip-item">
+    Platos totales: <strong id="kpi-total-platos">{{ resumen.total_platos }}</strong>
+  </div>
+  <div class="strip-item">
+    Disponibles hoy: <strong id="kpi-disponibles" style="color:#059669;">{{ resumen.platos_disponibles }}</strong>
+    (<span id="kpi-pct-disponibles">{{ resumen.pct_disponibles }}%</span>)
+  </div>
+  <div class="strip-item">
+    Agotados hoy: <strong id="kpi-agotados" style="color:#d97706;">{{ resumen.platos_agotados }}</strong>
+    (<span id="kpi-pct-agotados">{{ resumen.pct_agotados }}%</span>)
+  </div>
+</section>
+
+{% if categorias %}
+<section class="pesca-grid">
+  {% for cat in categorias %}
+  <article class="card">
+    <div class="card-header" style="border-bottom:1px solid #f1f5f9;padding-bottom:12px;">
+      <div>
+        <h2 class="card-title">{{ cat.nombre }}</h2>
+        <span class="card-meta">
+          {{ cat.disponibles }} disponibles · {{ cat.agotados }} agotados
+        </span>
+      </div>
+      {% if cat.total_platos > 0 %}
+      <div style="display:flex;gap:6px;">
+        <form method="post" action="{% url 'catalogo:categoria_toggle_all' cat.id %}">
+          {% csrf_token %}
+          <input type="hidden" name="estado" value="disponible">
+          <button type="submit" class="btn btn-sm btn-success-soft" title="Activar toda la categoría">
+            Activar todo
+          </button>
+        </form>
+        <form method="post" action="{% url 'catalogo:categoria_toggle_all' cat.id %}">
+          {% csrf_token %}
+          <input type="hidden" name="estado" value="agotado">
+          <button type="submit" class="btn btn-sm btn-warning-soft" title="Agotar toda la categoría">
+            Agotar
+          </button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+
+    {% for plato in cat.productos.all %}
+    <div class="pesca-item">
+      <div style="min-width:0;">
+        <div class="dish-name">{{ plato.nombre }}</div>
+        <div class="card-meta" style="font-variant-numeric:tabular-nums;">
+          S/ {{ plato.precio|floatformat:2 }}
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+        <span class="status-badge {% if plato.disponible %}is-available{% else %}is-soldout{% endif %}"
+              data-status-badge="{{ plato.id }}">
+          {% if plato.disponible %}Disponible{% else %}Agotado{% endif %}
+        </span>
+
+        <form method="post"
+              action="{% url 'catalogo:plato_toggle' plato.id %}"
+              class="stock-toggle-form"
+              data-ajax-toggle="true"
+              data-plato-id="{{ plato.id }}">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <button type="submit"
+                  class="switch-btn {% if plato.disponible %}is-on{% endif %}"
+                  aria-label="Cambiar stock de {{ plato.nombre }}"></button>
+        </form>
+      </div>
+    </div>
+    {% empty %}
+    <div class="empty-state" style="padding:18px 0;">
+      <p style="margin:0;">Sin platos en esta categoría.</p>
+    </div>
+    {% endfor %}
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="card empty-state">
+  <h3>No hay categorías ni platos cargados</h3>
+  <p>Carga la carta marina inicial o registra tus categorías manualmente.</p>
+  <form method="post" action="{% url 'catalogo:seed_demo' %}" style="margin-top:12px;">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-blue">Cargar carta marina de ejemplo</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

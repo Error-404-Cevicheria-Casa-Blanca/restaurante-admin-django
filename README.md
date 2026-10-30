@@ -43,11 +43,19 @@ PostgreSQL. Si defines solo algunas, el arranque falla con
 ### 3. Comandos diarios
 
 ```powershell
-.\.venv\Scripts\python.exe manage.py migrate
-.\.venv\Scripts\python.exe manage.py runserver
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m flake8
-.\.venv\Scripts\python.exe manage.py check
+$env:DJANGO_DEBUG = "1"
+.\venv\Scripts\python.exe manage.py migrate
+.\venv\Scripts\python.exe manage.py seed_catalogo
+.\venv\Scripts\python.exe manage.py runserver
+```
+
+- **Panel web de catálogo y pesca del día (PRB-19):** `http://127.0.0.1:8000/`
+- **Sitio administrativo técnico Django:** `http://127.0.0.1:8000/admin/`
+
+```powershell
+.\venv\Scripts\python.exe -m pytest
+.\venv\Scripts\python.exe -m flake8
+.\venv\Scripts\python.exe manage.py check
 ```
 
 ## Equipo

@@ -1,0 +1,351 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Dashboard de Carta{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">
+      Catálogo de platos marinos, estructura de precios y disponibilidad según pesca del día
+    </p>
+  </div>
+
+  <div class="header-controls">
+    <div class="pill-group" role="group" aria-label="Filtro de disponibilidad">
+      <a href="?estado=todos{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
+         class="pill-filter {% if estado_filtro == 'todos' %}is-active{% endif %}">
+        Toda la carta
+      </a>
+      <a href="?estado=disponibles{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
+         class="pill-filter {% if estado_filtro == 'disponibles' %}is-active{% endif %}">
+        Disponibles
+      </a>
+      <a href="?estado=agotados{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
+         class="pill-filter {% if estado_filtro == 'agotados' %}is-active{% endif %}">
+        Agotados
+      </a>
+    </div>
+
+    <form method="get" style="display:inline-flex;align-items:center;gap:6px;">
+      <input type="hidden" name="estado" value="{{ estado_filtro }}">
+      <select name="categoria" class="form-select" style="width:auto;padding:7px 12px;font-size:12.5px;">
+        <option value="">Todas las categorías</option>
+        {% for cat in categorias %}
+        <option value="{{ cat.id }}" {% if categoria_activa == cat.id %}selected{% endif %}>
+          {{ cat.nombre }}
+        </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-outline">Aplicar</button>
+    </form>
+
+    <button type="button" class="btn btn-primary" data-open-modal="modal-nuevo-plato">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+      Nuevo plato
+    </button>
+  </div>
+</header>
+
+<!-- Fila de 6 Tarjetas KPI (Alcance estricto PRB-19) -->
+<section class="kpi-grid" aria-label="Indicadores del catálogo">
+  <article class="kpi-card">
+    <div class="kpi-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11h18M5 11a7 7 0 0 1 14 0M4 15h16"/></svg>
+      Platos en carta
+    </div>
+    <div class="kpi-value" id="kpi-total-platos">{{ total_platos }}</div>
+    <div class="kpi-foot">
+      <span class="badge-trend neutral">{{ total_categorias }} categorías</span>
+      <span>registradas</span>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>
+      Disponibles hoy
+    </div>
+    <div class="kpi-value" id="kpi-disponibles">{{ platos_disponibles }}</div>
+    <div class="kpi-foot">
+      <span class="badge-trend up" id="kpi-pct-disponibles">{{ pct_disponibles }}%</span>
+      <span>pesca activa</span>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+      Agotados (pesca)
+    </div>
+    <div class="kpi-value" id="kpi-agotados">{{ platos_agotados }}</div>
+    <div class="kpi-foot">
+      <span class="badge-trend {% if platos_agotados > 0 %}warn{% else %}up{% endif %}" id="kpi-pct-agotados">
+        {{ pct_agotados }}%
+      </span>
+      <span>sin insumo hoy</span>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Precio promedio
+    </div>
+    <div class="kpi-value" id="kpi-precio-promedio">S/ {{ precio_promedio|floatformat:2 }}</div>
+    <div class="kpi-foot">
+      <span class="badge-trend neutral">Carta vigente</span>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 16 4 4 4-4M7 20V4M21 8l-4-4-4 4M17 4v16"/></svg>
+      Rango de precios
+    </div>
+    <div class="kpi-value kpi-range">
+      S/ {{ precio_min|floatformat:2 }} – {{ precio_max|floatformat:2 }}
+    </div>
+    <div class="kpi-foot">
+      <span>mínimo vs. máximo</span>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6"/></svg>
+      Cobertura de carta
+    </div>
+    <div class="kpi-value">{{ categorias_con_stock }}/{{ total_categorias }}</div>
+    <div class="kpi-foot">
+      <span class="badge-trend up">{{ categorias_sin_agotados }} al 100%</span>
+      <span>con stock</span>
+    </div>
+  </article>
+</section>
+
+<!-- Tira Resumen Horizontal -->
+<section class="summary-strip" aria-label="Resumen rápido por categoría">
+  {% for cat in categorias %}
+  <div class="strip-item">
+    <strong>{{ cat.disponibles }}/{{ cat.total_platos }}</strong> {{ cat.nombre }}
+  </div>
+  {% empty %}
+  <div class="strip-item">Sin categorías cargadas todavía</div>
+  {% endfor %}
+
+  {% if plato_mayor_precio %}
+  <div class="strip-item">
+    Mayor valor: <strong>S/ {{ plato_mayor_precio.precio|floatformat:2 }}</strong> ({{ plato_mayor_precio.nombre }})
+  </div>
+  {% endif %}
+  {% if plato_menor_precio %}
+  <div class="strip-item">
+    Entrada base: <strong>S/ {{ plato_menor_precio.precio|floatformat:2 }}</strong> ({{ plato_menor_precio.nombre }})
+  </div>
+  {% endif %}
+</section>
+
+<!-- Gráficos Principales (2 Columnas) -->
+<section class="charts-grid">
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title">Platos y precio promedio por categoría</h2>
+      </div>
+      <span class="card-meta">{{ total_categorias }} categorías activas</span>
+    </div>
+    <div class="chart-legend">
+      <span class="legend-item">
+        <span class="legend-swatch" style="background:#dfc05a;"></span> Platos registrados
+      </span>
+      <span class="legend-item">
+        <span class="legend-line"></span> Precio promedio (S/)
+      </span>
+    </div>
+    <div id="combo-chart-container" class="chart-stage"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Distribución de la carta</h2>
+      <div class="pill-group">
+        <button type="button" class="pill-filter is-active" data-donut-mode="categorias" style="padding:4px 10px;font-size:11.5px;">
+          Categorías
+        </button>
+        <button type="button" class="pill-filter" data-donut-mode="disponibilidad" style="padding:4px 10px;font-size:11.5px;">
+          Pesca del día
+        </button>
+      </div>
+    </div>
+    <div id="donut-chart-container" class="chart-stage" style="min-height:225px;"></div>
+    <div id="donut-legend" class="chart-legend" style="margin-top:8px;margin-bottom:0;"></div>
+  </div>
+</section>
+
+<!-- Tarjetas Operativas Inferiores -->
+<section class="bottom-grid">
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Control rápido · Pesca del día</h2>
+      <a href="{% url 'catalogo:pesca_dia' %}" class="card-link">Ver tablero completo</a>
+    </div>
+
+    {% if platos_destacados %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Plato marino</th>
+            <th>Categoría</th>
+            <th>Precio</th>
+            <th>Estado hoy</th>
+            <th>Stock</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for plato in platos_destacados %}
+          <tr>
+            <td class="dish-name">{{ plato.nombre }}</td>
+            <td><span class="cat-chip">{{ plato.categoria.nombre }}</span></td>
+            <td style="font-weight:600;font-variant-numeric:tabular-nums;">S/ {{ plato.precio|floatformat:2 }}</td>
+            <td>
+              <span class="status-badge {% if plato.disponible %}is-available{% else %}is-soldout{% endif %}"
+                    data-status-badge="{{ plato.id }}">
+                {% if plato.disponible %}Disponible{% else %}Agotado{% endif %}
+              </span>
+            </td>
+            <td>
+              <form method="post"
+                    action="{% url 'catalogo:plato_toggle' plato.id %}"
+                    class="stock-toggle-form"
+                    data-ajax-toggle="true"
+                    data-plato-id="{{ plato.id }}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <button type="submit"
+                        class="switch-btn {% if plato.disponible %}is-on{% endif %}"
+                        title="Cambiar disponibilidad"
+                        aria-label="Cambiar disponibilidad de {{ plato.nombre }}"></button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <h3>Aún no hay platos para mostrar</h3>
+      <p>Puedes registrar platos manualmente o cargar la carta marina de muestra.</p>
+      <form method="post" action="{% url 'catalogo:seed_demo' %}" style="margin-top:12px;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-blue">Cargar carta marina de ejemplo</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Resumen por categoría</h2>
+      <a href="{% url 'catalogo:categorias' %}" class="card-link">Gestionar categorías</a>
+    </div>
+
+    {% if categorias %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Categoría</th>
+            <th>Platos</th>
+            <th>Activos</th>
+            <th>Promedio</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cat in categorias %}
+          <tr>
+            <td>
+              <a href="{% url 'catalogo:platos_list' %}?categoria={{ cat.id }}" class="dish-name" style="color:#1d4ed8;">
+                {{ cat.nombre }}
+              </a>
+            </td>
+            <td>{{ cat.total_platos }}</td>
+            <td>
+              <span class="badge-trend {% if cat.agotados == 0 and cat.total_platos > 0 %}up{% elif cat.disponibles == 0 %}warn{% else %}neutral{% endif %}">
+                {{ cat.disponibles }} disp.
+              </span>
+            </td>
+            <td style="font-weight:600;font-variant-numeric:tabular-nums;">
+              {% if cat.precio_promedio %}S/ {{ cat.precio_promedio|floatformat:2 }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <p>No hay categorías registradas.</p>
+      <a href="{% url 'catalogo:categorias' %}" class="btn btn-outline">Crear primera categoría</a>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<!-- Modal de Alta Rápida de Plato -->
+<div id="modal-nuevo-plato" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-plato-title">
+  <div class="modal-card">
+    <div class="card-header" style="margin-bottom:16px;">
+      <h2 id="modal-plato-title" class="card-title" style="font-size:17px;">Registrar nuevo plato marino</h2>
+      <button type="button" class="flash-close" data-close-modal aria-label="Cerrar">&times;</button>
+    </div>
+
+    {% if categorias %}
+    <form method="post" action="{% url 'catalogo:plato_create' %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label" for="{{ form_plato_rapido.nombre.id_for_label }}">Nombre del plato *</label>
+          {{ form_plato_rapido.nombre }}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="{{ form_plato_rapido.categoria.id_for_label }}">Categoría *</label>
+          {{ form_plato_rapido.categoria }}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="{{ form_plato_rapido.precio.id_for_label }}">Precio (S/) *</label>
+          {{ form_plato_rapido.precio }}
+        </div>
+        <div class="form-group full">
+          <label class="form-label" for="{{ form_plato_rapido.descripcion.id_for_label }}">Descripción / Ficha breve</label>
+          {{ form_plato_rapido.descripcion }}
+        </div>
+        <div class="form-group full">
+          <label class="checkbox-row">
+            {{ form_plato_rapido.disponible }}
+            <span><strong>Disponible hoy</strong> según insumos y pesca del día</span>
+          </label>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
+        <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Guardar plato</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="empty-state">
+      <p>Primero debes registrar al menos una categoría marina antes de crear un plato.</p>
+      <a href="{% url 'catalogo:categorias' %}" class="btn btn-primary">Ir a Categorías</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{{ chart_categorias|json_script:"chart-categorias-data" }}
+{{ chart_donut|json_script:"chart-donut-data" }}
+{% endblock %}
