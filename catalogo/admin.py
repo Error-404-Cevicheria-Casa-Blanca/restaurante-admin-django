@@ -22,7 +22,9 @@ class CategoriaAdmin(admin.ModelAdmin):
 
     @admin.display(description="Total de platos", ordering="_total_productos")
     def total_productos(self, obj):
-        return obj._total_productos
+        if hasattr(obj, "_total_productos"):
+            return obj._total_productos
+        return obj.productos.count()
 
 
 @admin.register(Producto)
