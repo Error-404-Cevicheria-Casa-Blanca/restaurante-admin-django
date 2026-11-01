@@ -1,0 +1,113 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; margin: 40px; color: #1e293b; line-height: 1.6; }
+  h1 { color: #0284c7; border-bottom: 2px solid #0284c7; padding-bottom: 8px; }
+  h2 { color: #0369a1; margin-top: 25px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
+  h3 { color: #0f172a; }
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+  th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; }
+  th { background-color: #f1f5f9; color: #0f172a; font-weight: bold; }
+  tr:nth-child(even) { background-color: #f8fafc; }
+  code, pre { font-family: 'Consolas', monospace; background: #f1f5f9; border-radius: 4px; }
+  pre { padding: 12px; border: 1px solid #e2e8f0; font-size: 12px; overflow-x: auto; }
+  .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; background: #dcfce7; color: #15803d; }
+  .box { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 12px; margin: 15px 0; }
+</style>
+</head>
+<body>
+<h1>INFORME DE EVIDENCIA TÉCNICA — PRB-41</h1>
+<p><strong>Tarea Jira:</strong> PRB-41 — <em>Integración del módulo de catálogo y arranque local con SQLite</em><br>
+<strong>Responsable:</strong> Jerardo Cutipa (Backoffice Django Lead)<br>
+<strong>Proyecto:</strong> Sistema de Gestión — Cevichería "La Casa Blanca Restaurante"<br>
+<strong>Sprint:</strong> PRB Sprint 5 (Activo)<br>
+<strong>Estado:</strong> <span class="badge">LISTO / COMPLETADO</span></p>
+
+<h2>1. Objetivo y Criterios de Aceptación</h2>
+<p>Integrar el módulo de catálogo de la rama <code>feature/PE-19-catalogo-platos</code> en <code>develop</code> y resolver de forma limpia la convivencia entre SQLite local y PostgreSQL central para modelos con <code>managed=False</code>, garantizando que el entorno local arranque en limpio con SQLite sin requerir base de datos externa.</p>
+
+<div class="box">
+<strong>Criterio de Aceptación Oficial:</strong> develop arranca en limpio con SQLite y el catálogo es 100% operable.
+</div>
+
+<h2>2. Solución Arquitectónica: Convivencia SQLite y PostgreSQL (Regla D7)</h2>
+<p>En entornos compartidos de arquitectura distribuida (Spring Boot + Django + PostgreSQL central), la base de datos PostgreSQL no debe ser alterada por el ORM de Django (<code>managed = False</code> en los modelos de dominio). Sin embargo, para desarrollo local ágil y ejecución de pruebas automatizadas sin dependencias externas, se implementó el cargador dinámico <code>catalogo/sqlite_bootstrap.py</code>:</p>
+
+<ul>
+  <li><strong>Detección Automática de Motor:</strong> Si no se detectan variables de entorno de PostgreSQL (<code>DB_NAME</code>, <code>DB_USER</code>, etc.), Django conmuta automáticamente a <code>sqlite3</code> local (<code>db.sqlite3</code>).</li>
+  <li><strong>Cargador DDL Virtual para SQLite:</strong> <code>sqlite_bootstrap.py</code> inicializa dinámicamente las tablas de dominio (<code>categoria</code>, <code>producto</code>, <code>mesa</code>, <code>usuario</code>, <code>rol</code>) con sus restricciones y datos semilla iniciales solo cuando se ejecuta en SQLite.</li>
+  <li><strong>Preservación de Regla D7:</strong> En PostgreSQL, Django no genera migraciones DDL sobre las tablas de negocio, manteniendo el script <code>db/schema.sql</code> como la única fuente de verdad.</li>
+</ul>
+
+<h2>3. Procedimiento de Arranque Local en Limpio</h2>
+<pre>
+# 1. Clonar el repositorio y ubicarse en la rama develop
+git clone https://github.com/Error-404-Cevicheria-Casa-Blanca/restaurante-admin-django.git
+cd restaurante-admin-django
+git checkout develop
+
+# 2. Crear y activar entorno virtual Python
+python -m venv venv
+.\venv\Scripts\activate
+
+# 3. Instalar dependencias
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+# 4. Arranque Local 100% Offline con SQLite (Zero-Config)
+python manage.py runserver 127.0.0.1:8000
+
+# 5. Arranque conectado a PostgreSQL (Opcional, usando script automatizado)
+.\iniciar_servidor.bat
+</pre>
+
+<h2>4. Resultados de la Suite de Pruebas Automatizadas</h2>
+<p>Se ejecutó la suite completa de 22 pruebas unitarias e integración en el entorno de desarrollo local con SQLite:</p>
+<pre>
+============================= test session starts =============================
+platform win32 -- Python 3.13.3, pytest-9.1.1, pluggy-1.7.0
+django: version: 6.1.2, settings: config.settings (from ini)
+rootdir: C:\Users\LOQ\Documents\restaurante-admin-django
+collected 22 items
+
+catalogo/tests.py::CatalogoModelTests::test_actualizacion_de_precios PASSED [  4%]
+catalogo/tests.py::CatalogoModelTests::test_alta_plato_marino PASSED     [  9%]
+catalogo/tests.py::CatalogoModelTests::test_control_stock_pesca_del_dia PASSED [ 13%]
+catalogo/tests.py::CatalogoModelTests::test_creacion_categoria_y_str PASSED [ 18%]
+catalogo/tests.py::CatalogoModelTests::test_relacion_categoria_productos PASSED [ 22%]
+catalogo/tests.py::CatalogoModelTests::test_validacion_precio_debe_ser_positivo PASSED [ 27%]
+catalogo/tests.py::CatalogoAdminTests::test_accion_admin_marcar_disponible_pesca_dia PASSED [ 31%]
+catalogo/tests.py::CatalogoAdminTests::test_accion_admin_marcar_no_disponible_pesca_dia PASSED [ 36%]
+catalogo/tests.py::CatalogoAdminTests::test_admin_categoria_total_productos PASSED [ 40%]
+catalogo/tests.py::CatalogoWebPanelTests::test_acceso_protegido_redirige_a_login PASSED [ 45%]
+catalogo/tests.py::CatalogoWebPanelTests::test_acciones_lote_y_proteccion_borrado_categoria PASSED [ 50%]
+catalogo/tests.py::CatalogoWebPanelTests::test_actualizacion_rapida_precio_y_toggle_pesca_dia_json PASSED [ 54%]
+catalogo/tests.py::CatalogoWebPanelTests::test_alta_y_edicion_plato_desde_panel_web PASSED [ 59%]
+catalogo/tests.py::CatalogoWebPanelTests::test_dashboard_calcula_kpis_reales_prb19 PASSED [ 63%]
+catalogo/tests.py::test_settings_carga_sin_error PASSED                  [ 68%]
+catalogo/tests.py::test_debug_es_falso_por_defecto PASSED                [ 72%]
+catalogo/tests.py::test_basada_en_sqlite_sin_variables_de_entorno PASSED [ 77%]
+catalogo/tests.py::test_clave_secreta_obligatoria_sin_debug PASSED       [ 81%]
+catalogo/tests.py::test_clave_de_desarrollo_solo_con_django_debug PASSED [ 86%]
+catalogo/tests.py::test_sin_variables_db_usa_sqlite_en_subproceso PASSED [ 90%]
+catalogo/tests.py::test_con_las_cinco_variables_db_usa_postgresql PASSED [ 95%]
+catalogo/tests.py::test_con_variables_db_parciales_falla_indicando_faltantes PASSED [100%]
+
+============================= 22 passed in 7.03s ==============================
+</pre>
+
+<h2>5. Commits y Fusión en Repositorio GitHub</h2>
+<table>
+  <tr><th>Rama Origen</th><th>Rama Destino</th><th>Commit Merge</th><th>Estado</th></tr>
+  <tr>
+    <td><code>feature/PE-19-catalogo-platos</code></td>
+    <td><code>develop</code></td>
+    <td><code>f130400</code> (PR #5)</td>
+    <td><span class="badge">Fusionado y Sincronizado</span></td>
+  </tr>
+</table>
+
+</body>
+</html>
