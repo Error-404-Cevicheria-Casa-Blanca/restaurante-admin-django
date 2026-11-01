@@ -1,4 +1,5 @@
 from django.contrib import admin, messages
+from django.db.models import Count
 from django.utils.translation import ngettext
 
 from .models import Categoria, Producto
@@ -12,9 +13,16 @@ class CategoriaAdmin(admin.ModelAdmin):
     search_fields = ("nombre",)
     ordering = ("id",)
 
-    @admin.display(description="Total de platos")
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .annotate(_total_productos=Count("productos"))
+        )
+
+    @admin.display(description="Total de platos", ordering="_total_productos")
     def total_productos(self, obj):
-        return obj.productos.count()
+        return obj._total_productos
 
 
 @admin.register(Producto)

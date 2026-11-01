@@ -198,7 +198,7 @@ def dashboard_catalogo(request):
     }
 
     platos_destacados = list(
-        productos_qs.order_by("disponible", "categoria__id", "nombre")[:8]
+        productos_qs.order_by("-disponible", "categoria__id", "nombre")[:8]
     )
 
     context = {

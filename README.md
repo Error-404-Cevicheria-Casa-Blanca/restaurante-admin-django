@@ -6,7 +6,7 @@ Panel administrativo de la Cevichería "La Casa Blanca" - gestión de carta, pre
 
 - Python 3.14
 - Django 5.2 LTS
-- Django REST Framework
+- Django REST Framework y django-cors-headers (previstos para tareas de backoffice; este módulo no expone API)
 - PostgreSQL (producción), SQLite (desarrollo local)
 - pytest-django, coverage, flake8
 
@@ -35,6 +35,8 @@ $env:DJANGO_DEBUG = "0"
 $env:DJANGO_ALLOWED_HOSTS = "localhost,127.0.0.1"
 ```
 
+> **Aviso de despliegue en LAN:** Para operar en el restaurante en producción local con `DJANGO_DEBUG=0`, define `DJANGO_ALLOWED_HOSTS` incluyendo la dirección IP local de la PC central (servidor). El panel está diseñado para operar por HTTP dentro de la red local Wi-Fi cerrada (LAN) y no debe exponerse directamente a Internet. `manage.py check --deploy` reportará 5 avisos de seguridad estructurales para HTTPS (W004, W008, W012, W016, W020), los cuales son esperados y aceptables en una LAN privada sin certificados TLS; no actives `SECURE_SSL_REDIRECT` para no bloquear el acceso local por HTTP.
+
 Si no defines las variables `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` y
 `DB_PORT`, el panel usa SQLite local (`db.sqlite3`). Si defines las cinco, usa
 PostgreSQL. Si defines solo algunas, el arranque falla con
@@ -44,18 +46,21 @@ PostgreSQL. Si defines solo algunas, el arranque falla con
 
 ```powershell
 $env:DJANGO_DEBUG = "1"
-.\venv\Scripts\python.exe manage.py migrate
-.\venv\Scripts\python.exe manage.py seed_catalogo
-.\venv\Scripts\python.exe manage.py runserver
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py createsuperuser
+.\.venv\Scripts\python.exe manage.py seed_catalogo
+.\.venv\Scripts\python.exe manage.py runserver
 ```
+
+> **Nota sobre credenciales:** `createsuperuser` es obligatorio la primera vez. El panel web autentica contra `auth_user` (`D8-PASSWORD-HASHING.md`, punto 3), no contra la tabla `usuario` de `db/seed.sql`. Las cuentas `admin_test` / `password123` son para el backend Java/Android y no sirven para entrar al panel web.
 
 - **Panel web de catálogo y pesca del día (PRB-19):** `http://127.0.0.1:8000/`
 - **Sitio administrativo técnico Django:** `http://127.0.0.1:8000/admin/`
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest
-.\venv\Scripts\python.exe -m flake8
-.\venv\Scripts\python.exe manage.py check
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m flake8
+.\.venv\Scripts\python.exe manage.py check
 ```
 
 ## Equipo
