@@ -10,7 +10,7 @@ from django.conf import settings
 from django.contrib.admin.sites import AdminSite
 from django.core.exceptions import ValidationError
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
 from catalogo.models import Categoria, Producto
@@ -58,67 +58,61 @@ def _motor_bd_en_subproceso(entorno_extra):
     return _ejecutar_en_subproceso(codigo, entorno_extra)
 
 
-def test_settings_carga_sin_error():
-    """La configuración carga y trae lo mínimo del panel."""
-    assert "catalogo" in settings.INSTALLED_APPS
-    assert "inventario" in settings.INSTALLED_APPS
-    assert settings.LANGUAGE_CODE == "es-pe"
-    assert settings.TIME_ZONE == "America/Lima"
-    assert settings.USE_TZ is True
+class ConfiguracionTests(SimpleTestCase):
+    """Pruebas de configuración por entorno (PE-6). No tocan la base de datos."""
 
+    def test_settings_carga_sin_error(self):
+        self.assertIn("catalogo", settings.INSTALLED_APPS)
+        self.assertIn("inventario", settings.INSTALLED_APPS)
+        self.assertEqual(settings.LANGUAGE_CODE, "es-pe")
+        self.assertEqual(settings.TIME_ZONE, "America/Lima")
+        self.assertIs(settings.USE_TZ, True)
 
-def test_debug_es_falso_por_defecto():
-    """Sin DJANGO_DEBUG=1 el modo DEBUG queda apagado."""
-    assert os.environ.get("DJANGO_DEBUG") != "1"
-    assert settings.DEBUG is False
+    def test_debug_es_falso_por_defecto(self):
+        resultado = _ejecutar_en_subproceso(
+            "import config.settings as s; print(s.DEBUG)",
+            {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS},
+        )
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertEqual(resultado.stdout.strip(), "False")
 
+    def test_basada_en_sqlite_sin_variables_de_entorno(self):
+        resultado = _motor_bd_en_subproceso({"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS})
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertEqual(resultado.stdout.strip(), "django.db.backends.sqlite3")
 
-def test_basada_en_sqlite_sin_variables_de_entorno():
-    """Sin variables DB_* la BD por defecto es SQLite local."""
-    assert settings.DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3"
+    def test_clave_secreta_obligatoria_sin_debug(self):
+        resultado = _importar_settings_en_subproceso({})
+        self.assertNotEqual(resultado.returncode, 0)
+        self.assertIn("DJANGO_SECRET_KEY", resultado.stderr + resultado.stdout)
 
+    def test_clave_de_desarrollo_solo_con_django_debug(self):
+        resultado = _importar_settings_en_subproceso({"DJANGO_DEBUG": "1"})
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
 
-def test_clave_secreta_obligatoria_sin_debug():
-    """Sin DJANGO_SECRET_KEY (y sin DEBUG) la importación falla: no hay clave default."""
-    resultado = _importar_settings_en_subproceso({})
-    assert resultado.returncode != 0
-    assert "DJANGO_SECRET_KEY" in (resultado.stderr + resultado.stdout)
+    def test_sin_variables_db_usa_sqlite_en_subproceso(self):
+        resultado = _motor_bd_en_subproceso({"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS})
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertEqual(resultado.stdout.strip(), "django.db.backends.sqlite3")
 
+    def test_con_las_cinco_variables_db_usa_postgresql(self):
+        entorno = {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS, **_DB_COMPLETAS}
+        resultado = _motor_bd_en_subproceso(entorno)
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertEqual(resultado.stdout.strip(), "django.db.backends.postgresql")
 
-def test_clave_de_desarrollo_solo_con_django_debug():
-    """Solo con DJANGO_DEBUG=1 se permite importar sin clave explícita."""
-    resultado = _importar_settings_en_subproceso({"DJANGO_DEBUG": "1"})
-    assert resultado.returncode == 0
-
-
-def test_sin_variables_db_usa_sqlite_en_subproceso():
-    """Sin ninguna variable DB_* la BD por defecto es SQLite local."""
-    resultado = _motor_bd_en_subproceso({"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS})
-    assert resultado.returncode == 0, resultado.stderr
-    assert resultado.stdout.strip() == "django.db.backends.sqlite3"
-
-
-def test_con_las_cinco_variables_db_usa_postgresql():
-    """Con las 5 variables DB_* la BD por defecto es PostgreSQL (sin conectar)."""
-    entorno = {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS, **_DB_COMPLETAS}
-    resultado = _motor_bd_en_subproceso(entorno)
-    assert resultado.returncode == 0, resultado.stderr
-    assert resultado.stdout.strip() == "django.db.backends.postgresql"
-
-
-def test_con_variables_db_parciales_falla_indicando_faltantes():
-    """Con solo 3 de 5 variables DB_* la importación falla listando las faltantes."""
-    parciales = {
-        nombre: _DB_COMPLETAS[nombre]
-        for nombre in ("DB_NAME", "DB_USER", "DB_PASSWORD")
-    }
-    entorno = {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS, **parciales}
-    resultado = _motor_bd_en_subproceso(entorno)
-    assert resultado.returncode != 0
-    salida = resultado.stderr + resultado.stdout
-    assert "ImproperlyConfigured" in salida
-    assert "DB_HOST" in salida
-    assert "DB_PORT" in salida
+    def test_con_variables_db_parciales_falla_indicando_faltantes(self):
+        parciales = {
+            nombre: _DB_COMPLETAS[nombre]
+            for nombre in ("DB_NAME", "DB_USER", "DB_PASSWORD")
+        }
+        entorno = {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS, **parciales}
+        resultado = _motor_bd_en_subproceso(entorno)
+        self.assertNotEqual(resultado.returncode, 0)
+        salida = resultado.stderr + resultado.stdout
+        self.assertIn("ImproperlyConfigured", salida)
+        self.assertIn("DB_HOST", salida)
+        self.assertIn("DB_PORT", salida)
 
 
 # =============================================================================
@@ -127,29 +121,19 @@ def test_con_variables_db_parciales_falla_indicando_faltantes():
 
 
 def _crear_tablas_unmanaged_si_no_existen():
-    """Crea las tablas de categoria y producto si no existen en la BD de pruebas.
+    """Crea categoria y producto con el esquema real del modelo, en cualquier motor.
 
-    Aplica para entornos de prueba en memoria (SQLite) para respetar la regla D7
-    (DDL Ownership) sin alterar el esquema compartido en PostgreSQL.
+    `managed=False` impide que `migrate` las cree, pero el editor de esquema
+    sí puede crearlas (SQLite y PostgreSQL) sin DDL específico de un motor.
+    Debe llamarse ANTES de super().setUpClass(): en SQLite el schema_editor
+    no puede desactivar las FK dentro del atomic que abre TestCase.
     """
-    with connection.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS categoria (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nombre VARCHAR(100) NOT NULL UNIQUE
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS producto (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nombre VARCHAR(150) NOT NULL,
-                descripcion TEXT,
-                precio NUMERIC(10, 2) NOT NULL,
-                disponible BOOLEAN NOT NULL DEFAULT 1,
-                categoria_id INTEGER NOT NULL REFERENCES categoria(id),
-                imagen_url VARCHAR(255)
-            );
-        """)
+    existentes = set(connection.introspection.table_names())
+    with connection.schema_editor() as editor:
+        if Categoria._meta.db_table not in existentes:
+            editor.create_model(Categoria)
+        if Producto._meta.db_table not in existentes:
+            editor.create_model(Producto)
 
 
 class CatalogoModelTests(TestCase):
@@ -157,8 +141,8 @@ class CatalogoModelTests(TestCase):
 
     @classmethod
     def setUpClass(cls):
-        super().setUpClass()
         _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
 
     def setUp(self):
         self.categoria = Categoria.objects.create(nombre="Platos Marinos")
@@ -264,8 +248,8 @@ class CatalogoAdminTests(TestCase):
 
     @classmethod
     def setUpClass(cls):
-        super().setUpClass()
         _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
 
     def setUp(self):
         self.site = AdminSite()
@@ -327,8 +311,8 @@ class CatalogoWebPanelTests(TestCase):
 
     @classmethod
     def setUpClass(cls):
-        super().setUpClass()
         _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
 
     def setUp(self):
         from django.contrib.auth import get_user_model
