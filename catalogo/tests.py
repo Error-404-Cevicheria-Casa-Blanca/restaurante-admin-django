@@ -438,6 +438,21 @@ class CatalogoWebPanelTests(TestCase):
         self.plato_disp.refresh_from_db()
         self.assertFalse(self.plato_disp.disponible)
 
+    def test_precio_no_finito_devuelve_400(self):
+        """NaN e Infinity se rechazan con 400, no con 500."""
+        self.client.force_login(self.staff_user)
+        for valor in ("NaN", "Infinity", "-Infinity", "1e999"):
+            with self.subTest(valor=valor):
+                resp = self.client.post(
+                    f"/platos/{self.plato_disp.id}/actualizar-precio/",
+                    {"precio": valor},
+                    HTTP_ACCEPT="application/json",
+                )
+                self.assertEqual(resp.status_code, 400)
+                self.assertFalse(resp.json()["ok"])
+        self.plato_disp.refresh_from_db()
+        self.assertEqual(self.plato_disp.precio, Decimal("48.00"))
+
     def test_acciones_lote_y_proteccion_borrado_categoria(self):
         """Ejecuta acciones por lote e impide borrar categorías con platos."""
         self.client.force_login(self.staff_user)

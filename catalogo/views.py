@@ -1,6 +1,6 @@
 """Vistas del módulo web para gestión de catálogo, precios y pesca del día (PRB-19)."""
 
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from django.contrib import messages
@@ -411,7 +411,13 @@ def actualizar_precio_plato(request, pk):
     precio_raw = (request.POST.get("precio") or "").replace(",", ".").strip()
 
     try:
-        nuevo_precio = Decimal(precio_raw).quantize(Decimal("0.01"))
+        nuevo_precio = Decimal(precio_raw)
+        if not nuevo_precio.is_finite():
+            nuevo_precio = None
+        else:
+            nuevo_precio = nuevo_precio.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
     except (InvalidOperation, ValueError):
         nuevo_precio = None
 
