@@ -609,7 +609,16 @@ def eliminar_categoria(request, pk):
 @require_POST
 def cargar_carta_ejemplo_view(request):
     """Carga de forma idempotente platos marinos de demostración."""
-    cat_nuevas, platos_nuevos = poblar_carta_ejemplo()
+    try:
+        cat_nuevas, platos_nuevos = poblar_carta_ejemplo()
+    except ValueError:
+        messages.error(
+            request,
+            "La carta de ejemplo solo se carga en SQLite. "
+            "No se insertaron datos de demostración en la base compartida.",
+        )
+        return redirect(_url_retorno_segura(request, "catalogo:dashboard"))
+
     if cat_nuevas or platos_nuevos:
         messages.success(
             request,
