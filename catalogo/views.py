@@ -6,15 +6,16 @@ from functools import wraps
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.db import IntegrityError
-from django.db.models import Avg, Count, Max, Min, ProtectedError, Q
+from django.db.models import Avg, Count, Max, Min, ProtectedError, Q, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .forms import CategoriaForm, ProductoForm
-from .models import Categoria, Producto
+from .models import Categoria, Mesa, Pedido, Producto
 from .sqlite_bootstrap import asegurar_tablas_sqlite, poblar_carta_ejemplo
 
 
@@ -201,8 +202,59 @@ def dashboard_catalogo(request):
         productos_qs.order_by("-disponible", "categoria__id", "nombre")[:8]
     )
 
+    # Indicadores operativos del día (PRB-45)
+    hoy = timezone.localdate()
+
+    total_mesas = Mesa.objects.count()
+    mesas_ocupadas = Mesa.objects.filter(
+        estado__in=[Mesa.ESTADO_OCUPADA, Mesa.ESTADO_ATENDIENDO]
+    ).count()
+    mesas_libres = Mesa.objects.filter(estado=Mesa.ESTADO_LIBRE).count()
+    mesas_pide_cuenta = Mesa.objects.filter(estado=Mesa.ESTADO_PIDE_CUENTA).count()
+    pct_mesas_ocupadas = (
+        round((mesas_ocupadas / total_mesas) * 100, 1) if total_mesas else 0.0
+    )
+
+    ventas_dia_agg = Pedido.objects.filter(
+        estado=Pedido.ESTADO_COBRADO,
+        fecha_creacion__date=hoy,
+    ).aggregate(total_ventas=Sum("total"), count_cobrados=Count("id"))
+    ventas_dia = ventas_dia_agg["total_ventas"] or Decimal("0.00")
+    total_pedidos_cobrados_hoy = ventas_dia_agg["count_cobrados"] or 0
+
+    pedidos_pendientes = Pedido.objects.filter(
+        estado__in=[Pedido.ESTADO_PENDIENTE, Pedido.ESTADO_COCINANDO]
+    ).count()
+
+    mesas_salon = list(Mesa.objects.all().order_by("numero"))
+
+    pedidos_activos = list(
+        Pedido.objects.filter(
+            estado__in=[
+                Pedido.ESTADO_PENDIENTE,
+                Pedido.ESTADO_COCINANDO,
+                Pedido.ESTADO_LISTO,
+                Pedido.ESTADO_SERVIDO,
+            ]
+        )
+        .select_related("mesa")
+        .order_by("-fecha_creacion")[:8]
+    )
+
     context = {
         "nav_active": "dashboard",
+        "hoy": hoy,
+        "hora_actual": timezone.localtime().strftime("%H:%M:%S"),
+        "total_mesas": total_mesas,
+        "mesas_ocupadas": mesas_ocupadas,
+        "mesas_libres": mesas_libres,
+        "mesas_pide_cuenta": mesas_pide_cuenta,
+        "pct_mesas_ocupadas": pct_mesas_ocupadas,
+        "ventas_dia": ventas_dia,
+        "total_pedidos_cobrados_hoy": total_pedidos_cobrados_hoy,
+        "pedidos_pendientes": pedidos_pendientes,
+        "mesas_salon": mesas_salon,
+        "pedidos_activos": pedidos_activos,
         "estado_filtro": estado,
         "categoria_activa": categoria_activa,
         "categorias": categorias_list,
@@ -225,6 +277,68 @@ def dashboard_catalogo(request):
         "form_plato_rapido": ProductoForm(),
     }
     return render(request, "catalogo/dashboard.html", context)
+
+
+@staff_required
+def kpis_operativos_api(request):
+    """Devuelve en JSON los 4 indicadores operativos en tiempo real (PRB-45).
+
+    Permite actualización por sondeo simple (polling ligero) sin WebSocket.
+    """
+    asegurar_tablas_sqlite()
+    hoy = timezone.localdate()
+
+    total_mesas = Mesa.objects.count()
+    mesas_ocupadas = Mesa.objects.filter(
+        estado__in=[Mesa.ESTADO_OCUPADA, Mesa.ESTADO_ATENDIENDO]
+    ).count()
+    mesas_libres = Mesa.objects.filter(estado=Mesa.ESTADO_LIBRE).count()
+    mesas_pide_cuenta = Mesa.objects.filter(estado=Mesa.ESTADO_PIDE_CUENTA).count()
+    pct_mesas_ocupadas = (
+        round((mesas_ocupadas / total_mesas) * 100, 1) if total_mesas else 0.0
+    )
+
+    ventas_agg = Pedido.objects.filter(
+        estado=Pedido.ESTADO_COBRADO,
+        fecha_creacion__date=hoy,
+    ).aggregate(total_ventas=Sum("total"), count_cobrados=Count("id"))
+
+    ventas_dia = float(ventas_agg["total_ventas"] or Decimal("0.00"))
+    total_cobrados = ventas_agg["count_cobrados"] or 0
+    platos_agotados = Producto.objects.filter(disponible=False).count()
+    pedidos_pendientes = Pedido.objects.filter(
+        estado__in=[Pedido.ESTADO_PENDIENTE, Pedido.ESTADO_COCINANDO]
+    ).count()
+
+    mesas_data = [
+        {
+            "id": m.id,
+            "numero": m.numero,
+            "capacidad": m.capacidad,
+            "ubicacion": m.ubicacion,
+            "estado": m.estado,
+            "estado_display": m.get_estado_display(),
+        }
+        for m in Mesa.objects.all().order_by("numero")
+    ]
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "fecha": hoy.isoformat(),
+            "hora": timezone.localtime().strftime("%H:%M:%S"),
+            "mesas_ocupadas": mesas_ocupadas,
+            "total_mesas": total_mesas,
+            "mesas_libres": mesas_libres,
+            "mesas_pide_cuenta": mesas_pide_cuenta,
+            "pct_mesas_ocupadas": pct_mesas_ocupadas,
+            "ventas_dia": f"{ventas_dia:.2f}",
+            "pedidos_cobrados_hoy": total_cobrados,
+            "platos_agotados": platos_agotados,
+            "pedidos_pendientes": pedidos_pendientes,
+            "mesas": mesas_data,
+        }
+    )
 
 
 @staff_required

@@ -8,6 +8,7 @@ app_name = "catalogo"
 
 urlpatterns = [
     path("", views.dashboard_catalogo, name="dashboard"),
+    path("operativo/kpis/", views.kpis_operativos_api, name="kpis_operativos"),
     path("login/", views.panel_login, name="login"),
     path("logout/", views.panel_logout, name="logout"),
     path("platos/", views.lista_platos, name="platos_list"),

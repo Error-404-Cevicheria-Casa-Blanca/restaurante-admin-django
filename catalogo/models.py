@@ -82,3 +82,103 @@ class Producto(models.Model):
 
     def __str__(self):
         return f"{self.nombre} (S/ {self.precio})"
+
+
+class Mesa(models.Model):
+    """Mesa del salón en primer o segundo piso.
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'mesa' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    ESTADO_LIBRE = "LIBRE"
+    ESTADO_ATENDIENDO = "ATENDIENDO"
+    ESTADO_OCUPADA = "OCUPADA"
+    ESTADO_PIDE_CUENTA = "PIDE_CUENTA"
+
+    ESTADOS_CHOICES = [
+        (ESTADO_LIBRE, "Libre"),
+        (ESTADO_ATENDIENDO, "Atendiendo"),
+        (ESTADO_OCUPADA, "Ocupada"),
+        (ESTADO_PIDE_CUENTA, "Pide Cuenta"),
+    ]
+
+    numero = models.IntegerField(unique=True, verbose_name="Número de Mesa")
+    capacidad = models.IntegerField(verbose_name="Capacidad")
+    ubicacion = models.CharField(max_length=50, verbose_name="Ubicación")
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS_CHOICES,
+        default=ESTADO_LIBRE,
+        verbose_name="Estado de la mesa",
+    )
+
+    class Meta:
+        db_table = "mesa"
+        managed = False
+        verbose_name = "Mesa"
+        verbose_name_plural = "Mesas"
+        ordering = ["numero"]
+
+    def __str__(self):
+        return f"Mesa {self.numero} ({self.ubicacion}) - {self.get_estado_display()}"
+
+
+class Pedido(models.Model):
+    """Comanda o pedido realizado por una mesa.
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'pedido' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    Utilizado para el Dashboard operativo del día (PRB-45).
+    """
+
+    ESTADO_PENDIENTE = "PENDIENTE"
+    ESTADO_COCINANDO = "COCINANDO"
+    ESTADO_LISTO = "LISTO"
+    ESTADO_SERVIDO = "SERVIDO"
+    ESTADO_COBRADO = "COBRADO"
+    ESTADO_CANCELADO = "CANCELADO"
+
+    ESTADOS_CHOICES = [
+        (ESTADO_PENDIENTE, "Pendiente"),
+        (ESTADO_COCINANDO, "Cocinando"),
+        (ESTADO_LISTO, "Listo"),
+        (ESTADO_SERVIDO, "Servido"),
+        (ESTADO_COBRADO, "Cobrado"),
+        (ESTADO_CANCELADO, "Cancelado"),
+    ]
+
+    mesa = models.ForeignKey(
+        Mesa,
+        on_delete=models.RESTRICT,
+        db_column="mesa_id",
+        related_name="pedidos",
+        verbose_name="Mesa",
+    )
+    mozo_id = models.IntegerField(db_column="mozo_id", verbose_name="ID de Mozo")
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Fecha de Creación",
+    )
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS_CHOICES,
+        default=ESTADO_PENDIENTE,
+        verbose_name="Estado del Pedido",
+    )
+    total = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Total (S/)",
+    )
+
+    class Meta:
+        db_table = "pedido"
+        managed = False
+        verbose_name = "Pedido / Comanda"
+        verbose_name_plural = "Pedidos / Comandas"
+        ordering = ["-fecha_creacion"]
+
+    def __str__(self):
+        return f"Pedido #{self.id} (Mesa {self.mesa.numero}) - S/ {self.total}"

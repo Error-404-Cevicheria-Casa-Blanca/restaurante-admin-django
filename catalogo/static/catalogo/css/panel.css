@@ -1048,8 +1048,433 @@ a {
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.35);
 }
 
+/* ==========================================================================
+   Dashboard Operativo del Día · En Vivo (PRB-45)
+   ========================================================================== */
+.operativo-panel {
+  background: #ffffff;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 22px 24px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-card);
+}
+
+.operativo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 20px;
+}
+
+.operativo-title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.live-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulse-live 1.8s infinite;
+}
+
+@keyframes pulse-live {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.operativo-heading {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.operativo-subheading {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+
+.operativo-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.operativo-clock {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 4 KPIs Operativos en Fila */
+.operativo-kpis-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.op-kpi-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.op-kpi-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  transform: translateY(-1px);
+}
+
+.op-kpi-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.op-kpi-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.op-kpi-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.op-kpi-icon.icon-tables {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.op-kpi-icon.icon-sales {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.op-kpi-icon.icon-stock {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.op-kpi-icon.icon-orders {
+  background: #fdf2f8;
+  color: #db2777;
+}
+
+.op-kpi-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.op-kpi-badge.up {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.op-kpi-badge.warn {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.op-kpi-badge.danger {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.op-kpi-badge.neutral {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.op-kpi-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+
+.op-kpi-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-kpi-value .currency {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.op-kpi-value .op-kpi-total {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.op-kpi-foot {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Grilla Salón + Comandas */
+.operativo-layout-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+.op-salon-card,
+.op-pedidos-card {
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+}
+
+.op-mesa-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.op-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.op-legend-chip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.op-legend-chip.libre .dot { background-color: #10b981; }
+.op-legend-chip.atendiendo .dot { background-color: #3b82f6; }
+.op-legend-chip.ocupada .dot { background-color: #ef4444; }
+.op-legend-chip.cuenta .dot { background-color: #f59e0b; }
+
+/* Grilla de Mesas */
+.mesas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.mesa-box {
+  background: #ffffff;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.mesa-box:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+.mesa-num-badge {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.mesa-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mesa-ubicacion {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mesa-status-pill {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: center;
+  margin-top: 2px;
+}
+
+/* Colores de Estado de Mesas */
+.mesa-estado-libre {
+  border-color: #a7f3d0;
+  background: #f0fdf4;
+}
+.mesa-estado-libre .mesa-status-pill {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.mesa-estado-atendiendo {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.mesa-estado-atendiendo .mesa-status-pill {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.mesa-estado-ocupada {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+.mesa-estado-ocupada .mesa-status-pill {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.mesa-estado-pide_cuenta {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+.mesa-estado-pide_cuenta .mesa-status-pill {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+/* Comandas Activas List */
+.op-pedidos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.op-pedido-item {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.op-ped-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.op-ped-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.op-ped-total {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Estados de Pedidos */
+.ped-status-pendiente {
+  background: #fef3c7;
+  color: #b45309;
+}
+.ped-status-cocinando {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.ped-status-listo {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.ped-status-servido {
+  background: #dcfce7;
+  color: #15803d;
+}
+.ped-status-cobrado {
+  background: #f1f5f9;
+  color: #475569;
+}
+.ped-status-cancelado {
+  background: #f3f4f6;
+  color: #9ca3af;
+}
+
 /* --- Responsividad --- */
 @media (max-width: 1280px) {
+  .operativo-kpis-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .operativo-layout-grid {
+    grid-template-columns: 1fr;
+  }
   .kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1067,6 +1492,9 @@ a {
     width: 100%;
     height: auto;
     position: static;
+  }
+  .operativo-kpis-grid {
+    grid-template-columns: 1fr;
   }
   .kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
