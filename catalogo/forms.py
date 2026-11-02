@@ -76,9 +76,7 @@ class ProductoForm(forms.ModelForm):
                     "placeholder": "48.00",
                 }
             ),
-            "disponible": forms.CheckboxInput(
-                attrs={"class": "form-checkbox"}
-            ),
+            "disponible": forms.CheckboxInput(attrs={"class": "form-checkbox"}),
             "imagen_url": forms.TextInput(
                 attrs={
                     "class": "form-input",

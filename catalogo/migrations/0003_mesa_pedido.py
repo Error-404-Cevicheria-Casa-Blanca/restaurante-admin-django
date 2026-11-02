@@ -7,42 +7,108 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('catalogo', '0002_producto_categoria'),
+        ("catalogo", "0002_producto_categoria"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='Mesa',
+            name="Mesa",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('numero', models.IntegerField(unique=True, verbose_name='Número de Mesa')),
-                ('capacidad', models.IntegerField(verbose_name='Capacidad')),
-                ('ubicacion', models.CharField(max_length=50, verbose_name='Ubicación')),
-                ('estado', models.CharField(choices=[('LIBRE', 'Libre'), ('ATENDIENDO', 'Atendiendo'), ('OCUPADA', 'Ocupada'), ('PIDE_CUENTA', 'Pide Cuenta')], default='LIBRE', max_length=20, verbose_name='Estado de la mesa')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "numero",
+                    models.IntegerField(unique=True, verbose_name="Número de Mesa"),
+                ),
+                ("capacidad", models.IntegerField(verbose_name="Capacidad")),
+                (
+                    "ubicacion",
+                    models.CharField(max_length=50, verbose_name="Ubicación"),
+                ),
+                (
+                    "estado",
+                    models.CharField(
+                        choices=[
+                            ("LIBRE", "Libre"),
+                            ("ATENDIENDO", "Atendiendo"),
+                            ("OCUPADA", "Ocupada"),
+                            ("PIDE_CUENTA", "Pide Cuenta"),
+                        ],
+                        default="LIBRE",
+                        max_length=20,
+                        verbose_name="Estado de la mesa",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Mesa',
-                'verbose_name_plural': 'Mesas',
-                'db_table': 'mesa',
-                'ordering': ['numero'],
-                'managed': False,
+                "verbose_name": "Mesa",
+                "verbose_name_plural": "Mesas",
+                "db_table": "mesa",
+                "ordering": ["numero"],
+                "managed": False,
             },
         ),
         migrations.CreateModel(
-            name='Pedido',
+            name="Pedido",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('mozo_id', models.IntegerField(db_column='mozo_id', verbose_name='ID de Mozo')),
-                ('fecha_creacion', models.DateTimeField(auto_now_add=True, verbose_name='Fecha de Creación')),
-                ('estado', models.CharField(choices=[('PENDIENTE', 'Pendiente'), ('COCINANDO', 'Cocinando'), ('LISTO', 'Listo'), ('SERVIDO', 'Servido'), ('COBRADO', 'Cobrado'), ('CANCELADO', 'Cancelado')], default='PENDIENTE', max_length=20, verbose_name='Estado del Pedido')),
-                ('total', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=10, verbose_name='Total (S/)')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "mozo_id",
+                    models.IntegerField(db_column="mozo_id", verbose_name="ID de Mozo"),
+                ),
+                (
+                    "fecha_creacion",
+                    models.DateTimeField(
+                        auto_now_add=True, verbose_name="Fecha de Creación"
+                    ),
+                ),
+                (
+                    "estado",
+                    models.CharField(
+                        choices=[
+                            ("PENDIENTE", "Pendiente"),
+                            ("COCINANDO", "Cocinando"),
+                            ("LISTO", "Listo"),
+                            ("SERVIDO", "Servido"),
+                            ("COBRADO", "Cobrado"),
+                            ("CANCELADO", "Cancelado"),
+                        ],
+                        default="PENDIENTE",
+                        max_length=20,
+                        verbose_name="Estado del Pedido",
+                    ),
+                ),
+                (
+                    "total",
+                    models.DecimalField(
+                        decimal_places=2,
+                        default=Decimal("0.00"),
+                        max_digits=10,
+                        verbose_name="Total (S/)",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Pedido / Comanda',
-                'verbose_name_plural': 'Pedidos / Comandas',
-                'db_table': 'pedido',
-                'ordering': ['-fecha_creacion'],
-                'managed': False,
+                "verbose_name": "Pedido / Comanda",
+                "verbose_name_plural": "Pedidos / Comandas",
+                "db_table": "pedido",
+                "ordering": ["-fecha_creacion"],
+                "managed": False,
             },
         ),
     ]

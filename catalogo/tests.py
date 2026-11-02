@@ -384,9 +384,7 @@ class CatalogoWebPanelTests(TestCase):
             },
         )
         self.assertEqual(resp_invalido.status_code, 200)
-        self.assertFalse(
-            Producto.objects.filter(nombre="Plato Precio Cero").exists()
-        )
+        self.assertFalse(Producto.objects.filter(nombre="Plato Precio Cero").exists())
 
         resp_ok = self.client.post(
             "/platos/nuevo/",
@@ -456,9 +454,7 @@ class CatalogoWebPanelTests(TestCase):
         self.assertTrue(self.plato_agot.disponible)
 
         self.client.post(f"/categorias/{self.cat_entradas.id}/eliminar/")
-        self.assertTrue(
-            Categoria.objects.filter(pk=self.cat_entradas.id).exists()
-        )
+        self.assertTrue(Categoria.objects.filter(pk=self.cat_entradas.id).exists())
 
         cat_vacia = Categoria.objects.create(nombre="Bebidas Temporales")
         self.client.post(f"/categorias/{cat_vacia.id}/eliminar/")

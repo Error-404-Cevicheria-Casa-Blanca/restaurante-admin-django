@@ -179,9 +179,7 @@ def dashboard_catalogo(request):
             "total": cat.total_platos,
             "disponibles": cat.disponibles,
             "agotados": cat.agotados,
-            "precio_promedio": float(
-                round(cat.precio_promedio or Decimal("0.00"), 2)
-            ),
+            "precio_promedio": float(round(cat.precio_promedio or Decimal("0.00"), 2)),
         }
         for cat in categorias_list
     ]
@@ -582,7 +580,9 @@ def accion_masiva_platos(request):
     ids = [int(pk) for pk in ids_raw if pk.isdigit()]
 
     if not ids:
-        messages.warning(request, "Selecciona al menos un plato para aplicar el cambio.")
+        messages.warning(
+            request, "Selecciona al menos un plato para aplicar el cambio."
+        )
         return redirect(_url_retorno_segura(request, "catalogo:platos_list"))
 
     qs = Producto.objects.filter(pk__in=ids)
