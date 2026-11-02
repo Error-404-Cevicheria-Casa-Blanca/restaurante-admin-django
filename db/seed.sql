@@ -1,3 +1,4 @@
+-- ADVERTENCIA: datos de demostración. No ejecutar en la base compartida de producción. Las cuentas usan la contraseña conocida password123; cámbialas antes de cualquier uso real.
 -- Población inicial de datos
 -- NOTA DE SEGURIDAD: Todos los usuarios tienen la contraseña "password123"
 -- Hash BCrypt real (cost 10) generado con bcrypt.hashpw para "password123":

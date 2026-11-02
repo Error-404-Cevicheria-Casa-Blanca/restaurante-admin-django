@@ -6,6 +6,18 @@
 (function () {
   "use strict";
 
+  function escaparHtml(valor) {
+    return String(valor).replace(/[&<>"']/g, function (caracter) {
+      return {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[caracter];
+    });
+  }
+
   const PALETA_DONUT = ["#3b82f6", "#eab308", "#0f4c5c", "#10b981", "#f97316", "#6366f1"];
 
   function obtenerTooltip() {
@@ -122,7 +134,7 @@
       rect.style.cursor = "pointer";
 
       const infoHtml =
-        `<strong>${d.nombre}</strong><br>` +
+        `<strong>${escaparHtml(d.nombre)}</strong><br>` +
         `Platos totales: ${d.total} (${d.disponibles} disp. / ${d.agotados} agot.)<br>` +
         `Precio promedio: S/ ${Number(d.precio_promedio).toFixed(2)}`;
 
@@ -240,7 +252,10 @@
 
       const pct = ((it.value / total) * 100).toFixed(1);
       circle.addEventListener("mousemove", (e) =>
-        mostrarTooltip(e, `<strong>${it.label}</strong>: ${it.value} (${pct}%)`)
+        mostrarTooltip(
+          e,
+          `<strong>${escaparHtml(it.label)}</strong>: ${it.value} (${pct}%)`
+        )
       );
       circle.addEventListener("mouseleave", ocultarTooltip);
       svg.appendChild(circle);
@@ -271,13 +286,17 @@
 
     if (leyendaEl) {
       leyendaEl.innerHTML = items
-        .map(
-          (it) =>
+        .map((it) => {
+          const color = /^#[0-9a-fA-F]{6}$/.test(it.color)
+            ? it.color
+            : "#64748b";
+          return (
             `<span class="legend-item">` +
-            `<span class="legend-swatch" style="background:${it.color}"></span>` +
-            `${it.label} (${it.value})` +
+            `<span class="legend-swatch" style="background:${color}"></span>` +
+            `${escaparHtml(it.label)} (${it.value})` +
             `</span>`
-        )
+          );
+        })
         .join("");
     }
   }

@@ -1,6 +1,6 @@
 """Vistas del módulo web para gestión de catálogo, precios y pesca del día (PRB-19)."""
 
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from django.contrib import messages
@@ -198,7 +198,7 @@ def dashboard_catalogo(request):
     }
 
     platos_destacados = list(
-        productos_qs.order_by("disponible", "categoria__id", "nombre")[:8]
+        productos_qs.order_by("-disponible", "categoria__id", "nombre")[:8]
     )
 
     context = {
@@ -411,7 +411,13 @@ def actualizar_precio_plato(request, pk):
     precio_raw = (request.POST.get("precio") or "").replace(",", ".").strip()
 
     try:
-        nuevo_precio = Decimal(precio_raw).quantize(Decimal("0.01"))
+        nuevo_precio = Decimal(precio_raw)
+        if not nuevo_precio.is_finite():
+            nuevo_precio = None
+        else:
+            nuevo_precio = nuevo_precio.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
     except (InvalidOperation, ValueError):
         nuevo_precio = None
 
@@ -603,7 +609,16 @@ def eliminar_categoria(request, pk):
 @require_POST
 def cargar_carta_ejemplo_view(request):
     """Carga de forma idempotente platos marinos de demostración."""
-    cat_nuevas, platos_nuevos = poblar_carta_ejemplo()
+    try:
+        cat_nuevas, platos_nuevos = poblar_carta_ejemplo()
+    except ValueError:
+        messages.error(
+            request,
+            "La carta de ejemplo solo se carga en SQLite. "
+            "No se insertaron datos de demostración en la base compartida.",
+        )
+        return redirect(_url_retorno_segura(request, "catalogo:dashboard"))
+
     if cat_nuevas or platos_nuevos:
         messages.success(
             request,

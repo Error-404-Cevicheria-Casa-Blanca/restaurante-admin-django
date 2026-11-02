@@ -130,10 +130,13 @@ CARTA_INICIAL = [
 ]
 
 
+_TABLAS_ASEGURADAS = set()
+
+
 def asegurar_tablas_sqlite(using="default", **kwargs):
     """Crea `categoria` y `producto` únicamente si el motor activo es SQLite."""
     conn = connections[using]
-    if conn.vendor != "sqlite":
+    if conn.vendor != "sqlite" or using in _TABLAS_ASEGURADAS:
         return
 
     with conn.cursor() as cur:
@@ -159,11 +162,18 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
             );
             """
         )
+    _TABLAS_ASEGURADAS.add(using)
 
 
-def poblar_carta_ejemplo():
+def poblar_carta_ejemplo(permitir_postgres=False):
     """Inserta de forma idempotente categorías y platos marinos de muestra."""
     from catalogo.models import Categoria, Producto
+
+    if connections["default"].vendor != "sqlite" and not permitir_postgres:
+        raise ValueError(
+            "poblar_carta_ejemplo es solo para SQLite. "
+            "Para una demo sobre PostgreSQL usa permitir_postgres=True de forma explícita."
+        )
 
     asegurar_tablas_sqlite()
     categorias_creadas = 0
