@@ -17,7 +17,10 @@ CREATE TABLE mesa (
     numero INT NOT NULL UNIQUE CHECK (numero > 0),
     capacidad INT NOT NULL CHECK (capacidad > 0),
     ubicacion VARCHAR(100) NOT NULL,
-    estado VARCHAR(20) NOT NULL CHECK (estado IN ('LIBRE', 'OCUPADA', 'ATENDIDA', 'CUENTA_SOLICITADA')) DEFAULT 'LIBRE'
+    estado VARCHAR(20) NOT NULL CHECK (estado IN ('LIBRE', 'OCUPADA', 'ATENDIDA', 'CUENTA_SOLICITADA')) DEFAULT 'LIBRE',
+    mozo_id INT REFERENCES usuario(id) ON DELETE SET NULL,
+    fecha_apertura TIMESTAMP,
+    fecha_cierre TIMESTAMP
 );
 
 CREATE TABLE categoria (
@@ -61,3 +64,4 @@ CREATE INDEX idx_fk_producto_categoria ON producto(categoria_id);
 CREATE INDEX idx_fk_pedido_mozo ON pedido(mozo_id);
 CREATE INDEX idx_fk_detalle_pedido ON detalle_pedido(pedido_id);
 CREATE INDEX idx_fk_detalle_producto ON detalle_pedido(producto_id);
+CREATE INDEX idx_fk_mesa_mozo ON mesa(mozo_id);

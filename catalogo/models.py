@@ -112,6 +112,15 @@ class Mesa(models.Model):
         default=ESTADO_LIBRE,
         verbose_name="Estado de la mesa",
     )
+    mozo_id = models.IntegerField(
+        null=True, blank=True, verbose_name="ID Mozo"
+    )
+    fecha_apertura = models.DateTimeField(
+        null=True, blank=True, verbose_name="Fecha Apertura"
+    )
+    fecha_cierre = models.DateTimeField(
+        null=True, blank=True, verbose_name="Fecha Cierre"
+    )
 
     class Meta:
         db_table = "mesa"

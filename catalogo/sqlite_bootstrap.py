@@ -164,9 +164,21 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 numero INTEGER NOT NULL UNIQUE,
                 capacidad INTEGER NOT NULL,
                 ubicacion VARCHAR(50) NOT NULL,
-                estado VARCHAR(20) NOT NULL DEFAULT 'LIBRE'
+                estado VARCHAR(20) NOT NULL DEFAULT 'LIBRE',
+                mozo_id INTEGER,
+                fecha_apertura TIMESTAMP,
+                fecha_cierre TIMESTAMP
             );
             """)
+        for col_def in (
+            "mozo_id INTEGER",
+            "fecha_apertura TIMESTAMP",
+            "fecha_cierre TIMESTAMP",
+        ):
+            try:
+                cur.execute(f"ALTER TABLE mesa ADD COLUMN {col_def}")
+            except Exception:
+                pass
         cur.execute("""
             CREATE TABLE IF NOT EXISTS pedido (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
