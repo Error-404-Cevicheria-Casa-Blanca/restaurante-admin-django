@@ -400,10 +400,96 @@
     });
   }
 
+  /* --- Sondeo Simple del Dashboard Operativo (PRB-45) --- */
+  function iniciarPollingOperativo() {
+    const btnRefrescar = document.getElementById("btn-refrescar-operativo");
+    const container = document.querySelector(".operativo-panel");
+    if (!container) return;
+
+    async function refrescarOperativo() {
+      try {
+        const resp = await fetch("/operativo/kpis/", {
+          headers: { Accept: "application/json" },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data || !data.ok) return;
+
+        const setVal = (id, val) => {
+          const el = document.getElementById(id);
+          if (el) el.textContent = val;
+        };
+
+        setVal("op-kpi-mesas-ocupadas", data.mesas_ocupadas);
+        setVal("op-kpi-total-mesas", data.total_mesas);
+        setVal("op-kpi-mesas-libres", data.mesas_libres);
+        setVal("op-kpi-mesas-cuenta", data.mesas_pide_cuenta);
+        setVal("op-pct-ocupadas", data.pct_mesas_ocupadas + "% ocupación");
+        setVal("op-kpi-ventas-dia", data.ventas_dia);
+        setVal("op-badge-ventas", data.pedidos_cobrados_hoy + " cobradas");
+        setVal("op-kpi-platos-agotados", data.platos_agotados);
+        setVal("op-kpi-pedidos-pendientes", data.pedidos_pendientes);
+
+        const badgeAgotados = document.getElementById("op-badge-agotados");
+        if (badgeAgotados) {
+          badgeAgotados.className =
+            "op-kpi-badge " + (data.platos_agotados > 0 ? "warn" : "up");
+          badgeAgotados.textContent =
+            data.platos_agotados > 0 ? "Atención insumo" : "Stock activo";
+        }
+
+        const badgePedidos = document.getElementById("op-badge-pedidos");
+        if (badgePedidos) {
+          badgePedidos.className =
+            "op-kpi-badge " + (data.pedidos_pendientes > 0 ? "warn" : "up");
+          badgePedidos.textContent =
+            data.pedidos_pendientes > 0 ? "En preparación" : "Al día";
+        }
+
+        const ts = document.getElementById("operativo-timestamp");
+        if (ts && data.hora) {
+          ts.textContent = "Actualizado: " + data.hora;
+        }
+
+        if (Array.isArray(data.mesas)) {
+          data.mesas.forEach((m) => {
+            const mesaEl = document.querySelector(`[data-mesa-num="${m.numero}"]`);
+            if (mesaEl) {
+              mesaEl.className = `mesa-box mesa-estado-${m.estado.toLowerCase()}`;
+              const pill = mesaEl.querySelector(".mesa-status-pill");
+              if (pill) {
+                pill.textContent = m.estado_display || m.estado;
+              }
+            }
+          });
+        }
+      } catch (_) {
+        // En caso de corte momentáneo de red, continuar
+      }
+    }
+
+    if (btnRefrescar) {
+      btnRefrescar.addEventListener("click", function () {
+        btnRefrescar.disabled = true;
+        btnRefrescar.style.opacity = "0.6";
+        refrescarOperativo().finally(() => {
+          setTimeout(() => {
+            btnRefrescar.disabled = false;
+            btnRefrescar.style.opacity = "1";
+          }, 600);
+        });
+      });
+    }
+
+    // Sondeo simple cada 30 segundos (sin WebSocket, cumple PRB-45)
+    setInterval(refrescarOperativo, 30000);
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     renderComboCategorias();
     renderDonut("categorias");
     inicializarSwitchesAjax();
     inicializarModalesYLotes();
+    iniciarPollingOperativo();
   });
 })();

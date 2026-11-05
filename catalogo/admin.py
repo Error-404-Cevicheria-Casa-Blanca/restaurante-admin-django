@@ -15,9 +15,7 @@ class CategoriaAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return (
-            super()
-            .get_queryset(request)
-            .annotate(_total_productos=Count("productos"))
+            super().get_queryset(request).annotate(_total_productos=Count("productos"))
         )
 
     @admin.display(description="Total de platos", ordering="_total_productos")
@@ -100,9 +98,7 @@ class ProductoAdmin(admin.ModelAdmin):
         "marcar_no_disponible_pesca_dia",
     ]
 
-    @admin.action(
-        description="Marcar seleccionados como DISPONIBLES (pesca del día)"
-    )
+    @admin.action(description="Marcar seleccionados como DISPONIBLES (pesca del día)")
     def marcar_disponible_pesca_dia(self, request, queryset):
         filas_actualizadas = queryset.update(disponible=True)
         self.message_user(
@@ -116,9 +112,7 @@ class ProductoAdmin(admin.ModelAdmin):
             messages.SUCCESS,
         )
 
-    @admin.action(
-        description="Marcar seleccionados como NO DISPONIBLES / AGOTADOS"
-    )
+    @admin.action(description="Marcar seleccionados como NO DISPONIBLES / AGOTADOS")
     def marcar_no_disponible_pesca_dia(self, request, queryset):
         filas_actualizadas = queryset.update(disponible=False)
         self.message_user(

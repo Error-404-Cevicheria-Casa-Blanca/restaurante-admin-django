@@ -8,12 +8,13 @@ from unittest.mock import MagicMock
 
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
 
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
-from catalogo.models import Categoria, Producto
+from catalogo.models import Categoria, Mesa, Pedido, Producto
 
 RUTA_PROYECTO = str(settings.BASE_DIR)
 
@@ -134,6 +135,10 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(Categoria)
         if Producto._meta.db_table not in existentes:
             editor.create_model(Producto)
+        if Mesa._meta.db_table not in existentes:
+            editor.create_model(Mesa)
+        if Pedido._meta.db_table not in existentes:
+            editor.create_model(Pedido)
 
 
 class CatalogoModelTests(TestCase):
@@ -379,9 +384,7 @@ class CatalogoWebPanelTests(TestCase):
             },
         )
         self.assertEqual(resp_invalido.status_code, 200)
-        self.assertFalse(
-            Producto.objects.filter(nombre="Plato Precio Cero").exists()
-        )
+        self.assertFalse(Producto.objects.filter(nombre="Plato Precio Cero").exists())
 
         resp_ok = self.client.post(
             "/platos/nuevo/",
@@ -451,10 +454,141 @@ class CatalogoWebPanelTests(TestCase):
         self.assertTrue(self.plato_agot.disponible)
 
         self.client.post(f"/categorias/{self.cat_entradas.id}/eliminar/")
-        self.assertTrue(
-            Categoria.objects.filter(pk=self.cat_entradas.id).exists()
-        )
+        self.assertTrue(Categoria.objects.filter(pk=self.cat_entradas.id).exists())
 
         cat_vacia = Categoria.objects.create(nombre="Bebidas Temporales")
         self.client.post(f"/categorias/{cat_vacia.id}/eliminar/")
         self.assertFalse(Categoria.objects.filter(pk=cat_vacia.id).exists())
+
+
+class DashboardOperativoTests(TestCase):
+    """Pruebas unitarias e integración del Dashboard Operativo del día (PRB-45).
+
+    Verifica:
+    - Mesas ocupadas vs libres.
+    - Ventas del día (suma de comandas en estado COBRADO de hoy).
+    - Platos agotados.
+    - Pedidos pendientes en cocina.
+    - Endpoint JSON de sondeo simple (/operativo/kpis/).
+    - Rendereo HTML de los componentes operativos y mapa de salón.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="administrador_operativo",
+            password="adminpassword123",
+            is_staff=True,
+        )
+        self.categoria = Categoria.objects.create(
+            nombre="Ceviches Operativos",
+        )
+        self.plato_disp = Producto.objects.create(
+            nombre="Ceviche Clásico Operativo",
+            precio=Decimal("45.00"),
+            disponible=True,
+            categoria=self.categoria,
+        )
+        self.plato_agot = Producto.objects.create(
+            nombre="Pargo al Horno (Agotado)",
+            precio=Decimal("65.00"),
+            disponible=False,
+            categoria=self.categoria,
+        )
+
+        # Crear mesas
+        self.m1 = Mesa.objects.create(
+            numero=1,
+            capacidad=4,
+            ubicacion="Salón Principal",
+            estado=Mesa.ESTADO_LIBRE,
+        )
+        self.m2 = Mesa.objects.create(
+            numero=2,
+            capacidad=2,
+            ubicacion="Terraza",
+            estado=Mesa.ESTADO_OCUPADA,
+        )
+        self.m3 = Mesa.objects.create(
+            numero=3,
+            capacidad=6,
+            ubicacion="Zona VIP",
+            estado=Mesa.ESTADO_ATENDIENDO,
+        )
+        self.m4 = Mesa.objects.create(
+            numero=4,
+            capacidad=4,
+            ubicacion="Salón Principal",
+            estado=Mesa.ESTADO_PIDE_CUENTA,
+        )
+
+        # Crear pedidos
+        # 1 cobrado hoy
+        self.p_cobrado = Pedido.objects.create(
+            mesa=self.m4,
+            mozo_id=101,
+            estado=Pedido.ESTADO_COBRADO,
+            total=Decimal("120.50"),
+        )
+        # 1 pendiente
+        self.p_pendiente = Pedido.objects.create(
+            mesa=self.m2,
+            mozo_id=102,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("85.00"),
+        )
+        # 1 cocinando
+        self.p_cocinando = Pedido.objects.create(
+            mesa=self.m3,
+            mozo_id=101,
+            estado=Pedido.ESTADO_COCINANDO,
+            total=Decimal("150.00"),
+        )
+
+    def test_dashboard_html_contiene_seccion_operativa(self):
+        """GET / renderiza indicadores operativos, mesas y pedidos activos."""
+        self.client.force_login(self.staff_user)
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Operaciones del Día · Salón y Cocina")
+        self.assertContains(resp, "Mesas ocupadas")
+        self.assertContains(resp, "Ventas del día")
+        self.assertContains(resp, "Platos agotados")
+        self.assertContains(resp, "Pedidos pendientes")
+        self.assertContains(resp, "Salón y Estado de Mesas")
+        self.assertContains(resp, "Comandas en Curso")
+        self.assertContains(resp, "Mesa 1")
+        self.assertContains(resp, "Mesa 2")
+        self.assertTrue(
+            "120,50" in resp.content.decode("utf-8")
+            or "120.50" in resp.content.decode("utf-8")
+        )
+
+    def test_endpoint_kpis_operativos_json(self):
+        """GET /operativo/kpis/ devuelve métricas calculadas en JSON."""
+        self.client.force_login(self.staff_user)
+        resp = self.client.get("/operativo/kpis/")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["total_mesas"], 4)
+        # m2 (OCUPADA) y m3 (ATENDIENDO) suman 2
+        self.assertEqual(data["mesas_ocupadas"], 2)
+        self.assertEqual(data["mesas_libres"], 1)
+        self.assertEqual(data["mesas_pide_cuenta"], 1)
+        self.assertEqual(data["ventas_dia"], "120.50")
+        self.assertEqual(data["platos_agotados"], 1)
+        # p_pendiente + p_cocinando = 2
+        self.assertEqual(data["pedidos_pendientes"], 2)
+        self.assertEqual(len(data["mesas"]), 4)
+
+    def test_kpis_operativos_requiere_autenticacion(self):
+        """El endpoint operativo rechaza accesos anónimos redirigiendo al login."""
+        resp = self.client.get("/operativo/kpis/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)

@@ -140,16 +140,13 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
         return
 
     with conn.cursor() as cur:
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS categoria (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre VARCHAR(100) NOT NULL UNIQUE
             );
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS producto (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre VARCHAR(150) NOT NULL,
@@ -160,14 +157,44 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                     REFERENCES categoria(id) ON DELETE RESTRICT,
                 imagen_url VARCHAR(255)
             );
-            """
-        )
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mesa (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                numero INTEGER NOT NULL UNIQUE,
+                capacidad INTEGER NOT NULL,
+                ubicacion VARCHAR(50) NOT NULL,
+                estado VARCHAR(20) NOT NULL DEFAULT 'LIBRE',
+                mozo_id INTEGER,
+                fecha_apertura TIMESTAMP,
+                fecha_cierre TIMESTAMP
+            );
+            """)
+        for col_def in (
+            "mozo_id INTEGER",
+            "fecha_apertura TIMESTAMP",
+            "fecha_cierre TIMESTAMP",
+        ):
+            try:
+                cur.execute(f"ALTER TABLE mesa ADD COLUMN {col_def}")
+            except Exception:
+                pass
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pedido (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mesa_id INTEGER NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
+                mozo_id INTEGER NOT NULL,
+                fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+                total NUMERIC(10, 2) NOT NULL DEFAULT 0.00
+            );
+            """)
     _TABLAS_ASEGURADAS.add(using)
 
 
 def poblar_carta_ejemplo(permitir_postgres=False):
     """Inserta de forma idempotente categorías y platos marinos de muestra."""
-    from catalogo.models import Categoria, Producto
+    from catalogo.models import Categoria, Producto, Mesa
 
     if connections["default"].vendor != "sqlite" and not permitir_postgres:
         raise ValueError(
@@ -178,6 +205,29 @@ def poblar_carta_ejemplo(permitir_postgres=False):
     asegurar_tablas_sqlite()
     categorias_creadas = 0
     platos_creados = 0
+
+    with transaction.atomic():
+        if Mesa.objects.count() == 0:
+            mesas_def = [
+                (1, 4, "Primer piso"),
+                (2, 4, "Primer piso"),
+                (3, 4, "Primer piso"),
+                (4, 6, "Primer piso"),
+                (5, 6, "Primer piso"),
+                (6, 2, "Primer piso"),
+                (7, 2, "Primer piso"),
+                (8, 4, "Segundo piso"),
+                (9, 4, "Segundo piso"),
+                (10, 4, "Segundo piso"),
+                (11, 6, "Segundo piso"),
+                (12, 6, "Segundo piso"),
+                (13, 8, "Segundo piso (Terraza)"),
+            ]
+            for num, cap, ubi in mesas_def:
+                Mesa.objects.get_or_create(
+                    numero=num,
+                    defaults={"capacidad": cap, "ubicacion": ubi, "estado": "LIBRE"},
+                )
 
     with transaction.atomic():
         for nombre_categoria, platos in CARTA_INICIAL:
