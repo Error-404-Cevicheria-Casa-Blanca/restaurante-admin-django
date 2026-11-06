@@ -10,6 +10,8 @@ CREATE TABLE usuario (
     username VARCHAR(50) NOT NULL UNIQUE,
     clave_hash VARCHAR(255) NOT NULL,
     pin_hash VARCHAR(255),
+    intentos_fallidos INT NOT NULL DEFAULT 0,
+    bloqueado_hasta TIMESTAMP,
     rol_id INT NOT NULL REFERENCES rol(id) ON DELETE RESTRICT
 );
 
@@ -43,10 +45,13 @@ CREATE TABLE pedido (
     id SERIAL PRIMARY KEY,
     mesa_id INT REFERENCES mesa(id) ON DELETE RESTRICT,
     mozo_id INT NOT NULL REFERENCES usuario(id) ON DELETE RESTRICT,
-    estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO', 'ANULADO')) DEFAULT 'PENDIENTE',
+    estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO', 'ANULADO', 'CANCELADO')) DEFAULT 'PENDIENTE',
     total NUMERIC(10,2) NOT NULL DEFAULT 0.00,
     client_request_id VARCHAR(64) UNIQUE,
     version INT NOT NULL DEFAULT 1,
+    motivo_anulacion VARCHAR(255),
+    tipo_pedido VARCHAR(30) NOT NULL DEFAULT 'SALON',
+    cliente_nombre VARCHAR(120),
     fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -57,6 +62,7 @@ CREATE TABLE detalle_pedido (
     precio_unitario NUMERIC(10,2) NOT NULL CHECK (precio_unitario > 0),
     cantidad INT NOT NULL CHECK (cantidad >= 1),
     notas VARCHAR(255),
+    modificadores_json TEXT,
     subtotal NUMERIC(10,2) NOT NULL CHECK (subtotal >= 0)
 );
 
@@ -146,4 +152,14 @@ CREATE TABLE impresion_cola (
 );
 
 CREATE INDEX idx_impresion_pendiente ON impresion_cola(estado, fecha_creacion);
+
+-- =============================================================================
+-- TABLA: token_revocado (Revocación persistente de sesiones/JWT - PRB-54)
+-- =============================================================================
+CREATE TABLE token_revocado (
+    id SERIAL PRIMARY KEY,
+    token_hash VARCHAR(128) NOT NULL UNIQUE,
+    fecha_revocacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 
