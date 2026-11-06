@@ -93,14 +93,18 @@ class Mesa(models.Model):
 
     ESTADO_LIBRE = "LIBRE"
     ESTADO_ATENDIENDO = "ATENDIENDO"
+    ESTADO_ATENDIDA = "ATENDIDA"
     ESTADO_OCUPADA = "OCUPADA"
     ESTADO_PIDE_CUENTA = "PIDE_CUENTA"
+    ESTADO_CUENTA_SOLICITADA = "CUENTA_SOLICITADA"
 
     ESTADOS_CHOICES = [
         (ESTADO_LIBRE, "Libre"),
         (ESTADO_ATENDIENDO, "Atendiendo"),
+        (ESTADO_ATENDIDA, "Atendida"),
         (ESTADO_OCUPADA, "Ocupada"),
         (ESTADO_PIDE_CUENTA, "Pide Cuenta"),
+        (ESTADO_CUENTA_SOLICITADA, "Cuenta Solicitada"),
     ]
 
     numero = models.IntegerField(unique=True, verbose_name="Número de Mesa")
@@ -112,9 +116,7 @@ class Mesa(models.Model):
         default=ESTADO_LIBRE,
         verbose_name="Estado de la mesa",
     )
-    mozo_id = models.IntegerField(
-        null=True, blank=True, verbose_name="ID Mozo"
-    )
+    mozo_id = models.IntegerField(null=True, blank=True, verbose_name="ID Mozo")
     fecha_apertura = models.DateTimeField(
         null=True, blank=True, verbose_name="Fecha Apertura"
     )
@@ -146,6 +148,7 @@ class Pedido(models.Model):
     ESTADO_LISTO = "LISTO"
     ESTADO_SERVIDO = "SERVIDO"
     ESTADO_COBRADO = "COBRADO"
+    ESTADO_ANULADO = "ANULADO"
     ESTADO_CANCELADO = "CANCELADO"
 
     ESTADOS_CHOICES = [
@@ -154,12 +157,15 @@ class Pedido(models.Model):
         (ESTADO_LISTO, "Listo"),
         (ESTADO_SERVIDO, "Servido"),
         (ESTADO_COBRADO, "Cobrado"),
+        (ESTADO_ANULADO, "Anulado"),
         (ESTADO_CANCELADO, "Cancelado"),
     ]
 
     mesa = models.ForeignKey(
         Mesa,
         on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
         db_column="mesa_id",
         related_name="pedidos",
         verbose_name="Mesa",
@@ -181,6 +187,17 @@ class Pedido(models.Model):
         default=Decimal("0.00"),
         verbose_name="Total (S/)",
     )
+    client_request_id = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name="UUID Idempotencia",
+    )
+    version = models.IntegerField(
+        default=1,
+        verbose_name="Versión Concurrente",
+    )
 
     class Meta:
         db_table = "pedido"
@@ -190,4 +207,182 @@ class Pedido(models.Model):
         ordering = ["-fecha_creacion"]
 
     def __str__(self):
-        return f"Pedido #{self.id} (Mesa {self.mesa.numero}) - S/ {self.total}"
+        origen = f"Mesa {self.mesa.numero}" if self.mesa else "Para llevar"
+        return f"Pedido #{self.id} ({origen}) - S/ {self.total}"
+
+
+class SesionCaja(models.Model):
+    """Sesión de caja y arqueo por turno (PRB-60).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'sesion_caja' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    ESTADO_ABIERTA = "ABIERTA"
+    ESTADO_CERRADA = "CERRADA"
+
+    ESTADOS_CHOICES = [
+        (ESTADO_ABIERTA, "Abierta"),
+        (ESTADO_CERRADA, "Cerrada"),
+    ]
+
+    cajero_id = models.IntegerField(db_column="cajero_id", verbose_name="ID Cajero")
+    fecha_apertura = models.DateTimeField(
+        auto_now_add=True, verbose_name="Fecha Apertura"
+    )
+    fecha_cierre = models.DateTimeField(
+        null=True, blank=True, verbose_name="Fecha Cierre"
+    )
+    monto_inicial = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Monto Inicial (S/)",
+    )
+    monto_ventas_efectivo = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Ventas Efectivo (S/)",
+    )
+    monto_ventas_digital = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Ventas Digitales (S/)",
+    )
+    monto_esperado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Monto Esperado (S/)",
+    )
+    monto_real = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Monto Real / Contado (S/)",
+    )
+    diferencia = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Diferencia (S/)",
+    )
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS_CHOICES,
+        default=ESTADO_ABIERTA,
+        verbose_name="Estado de Caja",
+    )
+    observaciones = models.TextField(
+        null=True, blank=True, verbose_name="Observaciones"
+    )
+
+    class Meta:
+        db_table = "sesion_caja"
+        managed = False
+        verbose_name = "Sesión de Caja"
+        verbose_name_plural = "Sesiones de Caja"
+        ordering = ["-fecha_apertura"]
+
+    def __str__(self):
+        f_str = (
+            self.fecha_apertura.strftime("%Y-%m-%d %H:%M")
+            if self.fecha_apertura
+            else ""
+        )
+        return f"Caja #{self.id} ({self.estado}) - Apertura: {f_str}"
+
+
+class Pago(models.Model):
+    """Registro transaccional de pagos multimoneda (PRB-51, PRB-55, PRB-56).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'pago' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    METODO_EFECTIVO = "EFECTIVO"
+    METODO_YAPE = "YAPE"
+    METODO_PLIN = "PLIN"
+    METODO_TARJETA = "TARJETA"
+
+    METODOS_CHOICES = [
+        (METODO_EFECTIVO, "Efectivo"),
+        (METODO_YAPE, "Yape"),
+        (METODO_PLIN, "Plin"),
+        (METODO_TARJETA, "Tarjeta"),
+    ]
+
+    pedido = models.ForeignKey(
+        Pedido,
+        on_delete=models.RESTRICT,
+        db_column="pedido_id",
+        related_name="pagos",
+        verbose_name="Pedido",
+    )
+    mesa = models.ForeignKey(
+        Mesa,
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        db_column="mesa_id",
+        related_name="pagos",
+        verbose_name="Mesa",
+    )
+    mozo_id = models.IntegerField(
+        null=True, blank=True, db_column="mozo_id", verbose_name="ID Mozo"
+    )
+    sesion_caja = models.ForeignKey(
+        SesionCaja,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="sesion_caja_id",
+        related_name="pagos",
+        verbose_name="Sesión de Caja",
+    )
+    metodo = models.CharField(
+        max_length=20,
+        choices=METODOS_CHOICES,
+        verbose_name="Método de Pago",
+    )
+    monto = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name="Monto Pagado (S/)",
+    )
+    propina = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Propina (S/)",
+    )
+    referencia = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        verbose_name="Nro. Referencia / Operación",
+    )
+    client_request_id = models.CharField(
+        max_length=64,
+        unique=True,
+        verbose_name="UUID Idempotencia",
+    )
+    fecha_pago = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Fecha de Pago",
+    )
+
+    class Meta:
+        db_table = "pago"
+        managed = False
+        verbose_name = "Pago"
+        verbose_name_plural = "Pagos"
+        ordering = ["-fecha_pago"]
+
+    def __str__(self):
+        origen = f"Mesa {self.mesa.numero}" if self.mesa else "Para llevar"
+        return f"Pago #{self.id} ({self.metodo}) - S/ {self.monto} ({origen})"
