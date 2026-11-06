@@ -189,6 +189,37 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 total NUMERIC(10, 2) NOT NULL DEFAULT 0.00
             );
             """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sesion_caja (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cajero_id INTEGER NOT NULL,
+                fecha_apertura TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                fecha_cierre TIMESTAMP,
+                monto_inicial NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                monto_ventas_efectivo NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                monto_ventas_digital NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                monto_esperado NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                monto_real NUMERIC(10, 2),
+                diferencia NUMERIC(10, 2),
+                estado VARCHAR(20) NOT NULL DEFAULT 'ABIERTA',
+                observaciones TEXT
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pago (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id INTEGER NOT NULL REFERENCES pedido(id) ON DELETE RESTRICT,
+                mesa_id INTEGER NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
+                mozo_id INTEGER,
+                sesion_caja_id INTEGER REFERENCES sesion_caja(id) ON DELETE SET NULL,
+                metodo VARCHAR(20) NOT NULL,
+                monto NUMERIC(10, 2) NOT NULL,
+                propina NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                referencia VARCHAR(100),
+                client_request_id VARCHAR(64) NOT NULL UNIQUE,
+                fecha_pago TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
     _TABLAS_ASEGURADAS.add(using)
 
 
