@@ -1,0 +1,278 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Reportes de Ventas y Medios de Pago{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Reportes de Ventas y Medios de Pago</h1>
+    <p class="page-subtitle">
+      Ventas liquidadas del día, ticket promedio, desglose por medio de pago y conciliación con caja
+    </p>
+  </div>
+
+  <div class="header-controls">
+    <form method="get" style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <label for="filtro-fecha" style="font-size:12.5px;font-weight:600;color:var(--text-secondary);">Fecha operativa:</label>
+      <input type="date"
+             id="filtro-fecha"
+             name="fecha"
+             value="{{ fecha_consulta|date:'Y-m-d' }}"
+             class="form-input"
+             style="width:auto;padding:7px 12px;font-size:13px;">
+      <button type="submit" class="btn btn-primary">Consultar</button>
+      {% if not es_hoy %}
+      <a href="{% url 'catalogo:reportes' %}" class="btn btn-outline">Hoy</a>
+      {% endif %}
+    </form>
+
+    <a href="{% url 'catalogo:caja' %}" class="btn btn-outline">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/>
+      </svg>
+      Ir a Caja y Arqueo
+    </a>
+  </div>
+</header>
+
+<!-- =======================================================================
+     INDICADORES PRINCIPALES DEL DÍA (PRB-61)
+     ======================================================================= -->
+<section class="operativo-panel" aria-label="Indicadores de ventas de la fecha">
+  <div class="operativo-header">
+    <div class="operativo-title-group">
+      <span class="badge-trend {% if es_hoy %}up{% else %}neutral{% endif %}">
+        {% if es_hoy %}Jornada de Hoy{% else %}Consulta Histórica{% endif %}
+      </span>
+      <div>
+        <h2 class="operativo-heading">Resumen Operativo · {{ fecha_consulta|date:"d/m/Y" }}</h2>
+        <p class="operativo-subheading">Facturación cobrada, ticket promedio y distribución por canal de cobro</p>
+      </div>
+    </div>
+    <div class="operativo-actions">
+      <span class="badge-trend neutral">{{ total_transacciones }} transacción(es) de pago</span>
+    </div>
+  </div>
+
+  <div class="operativo-kpis-grid" style="margin-bottom:0;">
+    <!-- KPI 1: Ventas del Día -->
+    <article class="op-kpi-card">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-sales">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 6v12M8.5 9.5a3.5 3.5 0 0 1 7 0c0 2-2 3-3.5 3.5s-3.5 1.5-3.5 3.5a3.5 3.5 0 0 0 7 0"/></svg>
+        </span>
+        <span class="op-kpi-badge up">Total recaudado</span>
+      </div>
+      <div class="op-kpi-title">Ventas del día</div>
+      <div class="op-kpi-value" id="rep-ventas-dia">
+        <span class="currency">S/</span> {{ ventas_dia|floatformat:2 }}
+      </div>
+      <div class="op-kpi-foot">Ingresos netos cobrados en la fecha</div>
+    </article>
+
+    <!-- KPI 2: Pedidos Cobrados -->
+    <article class="op-kpi-card">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-tables">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        </span>
+        <span class="op-kpi-badge neutral">{{ total_transacciones }} abono(s)</span>
+      </div>
+      <div class="op-kpi-title">Pedidos cobrados</div>
+      <div class="op-kpi-value" id="rep-pedidos-cobrados">{{ pedidos_cobrados }}</div>
+      <div class="op-kpi-foot">Comandas liquidadas (incluye cobros divididos)</div>
+    </article>
+
+    <!-- KPI 3: Ticket Promedio -->
+    <article class="op-kpi-card">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-orders">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+        </span>
+        <span class="op-kpi-badge up">Promedio / comanda</span>
+      </div>
+      <div class="op-kpi-title">Ticket promedio</div>
+      <div class="op-kpi-value" id="rep-ticket-promedio">
+        <span class="currency">S/</span> {{ ticket_promedio|floatformat:2 }}
+      </div>
+      <div class="op-kpi-foot">Ventas del día ÷ Pedidos cobrados</div>
+    </article>
+
+    <!-- KPI 4: Efectivo vs Digital y Propinas -->
+    <article class="op-kpi-card">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-stock">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        </span>
+        <span class="op-kpi-badge neutral">{{ pct_efectivo }}% Efec. · {{ pct_digital }}% Dig.</span>
+      </div>
+      <div class="op-kpi-title">Medios digitales</div>
+      <div class="op-kpi-value">
+        <span class="currency">S/</span> {{ total_digital|floatformat:2 }}
+      </div>
+      <div class="op-kpi-foot">
+        Efectivo: <strong>S/ {{ total_efectivo|floatformat:2 }}</strong> · Propinas: <strong>S/ {{ total_propinas|floatformat:2 }}</strong>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- =======================================================================
+     DESGLOSE POR MEDIO DE PAGO + CONCILIACIÓN CON CAJA
+     ======================================================================= -->
+<div class="caja-layout-grid">
+  <!-- Desglose por Medio de Pago -->
+  <section class="card" aria-label="Desglose por medio de pago">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title">Desglose por Medio de Pago</h2>
+        <p class="card-meta" style="margin:2px 0 0;">Distribución exacta entre Efectivo, Yape, Plin y Tarjeta</p>
+      </div>
+      <span class="card-meta">Pagos detallados: <strong>S/ {{ total_pagos_registrados|floatformat:2 }}</strong></span>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Medio de Pago</th>
+            <th>Transacciones</th>
+            <th>Pedidos</th>
+            <th>Propinas</th>
+            <th>Monto Recaudado</th>
+            <th>Participación</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in desglose_medios %}
+          <tr>
+            <td>
+              <span class="metodo-chip metodo-{{ m.codigo|lower }}">{{ m.nombre }}</span>
+            </td>
+            <td class="tabular-nums">{{ m.transacciones }}</td>
+            <td class="tabular-nums">{{ m.pedidos }}</td>
+            <td class="tabular-nums">S/ {{ m.propinas|floatformat:2 }}</td>
+            <td class="tabular-nums" style="font-weight:700;">S/ {{ m.monto|floatformat:2 }}</td>
+            <td style="min-width:130px;">
+              <div style="display:flex;justify-content:space-between;font-size:12px;">
+                <span class="tabular-nums">{{ m.porcentaje }}%</span>
+              </div>
+              <div class="pay-bar-track">
+                <div class="pay-bar-fill pay-fill-{{ m.codigo|lower }}" style="width:{{ m.porcentaje|floatformat:0 }}%;"></div>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Conciliación con Sesiones de Caja de la Fecha -->
+  <section class="card" aria-label="Comparativa con sesiones de caja">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title">Conciliación con Caja ({{ fecha_consulta|date:"d/m/Y" }})</h2>
+        <p class="card-meta" style="margin:2px 0 0;">Contraste directo del reporte diario frente a los turnos de caja</p>
+      </div>
+      <a href="{% url 'catalogo:caja' %}" class="card-link">Abrir Arqueo</a>
+    </div>
+
+    {% if sesiones_dia %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Turno</th>
+            <th>Estado</th>
+            <th>Efectivo</th>
+            <th>Digital</th>
+            <th>Total Turno</th>
+            <th>Arqueo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sesiones_dia %}
+          <tr>
+            <td>
+              <strong>#{{ s.id }}</strong>
+              <div style="font-size:11.5px;color:var(--text-muted);">{{ s.cajero_nombre }}</div>
+            </td>
+            <td>
+              <span class="status-badge {% if s.estado == 'ABIERTA' %}is-available{% else %}ped-status-cobrado{% endif %}">
+                {{ s.get_estado_display }}
+              </span>
+            </td>
+            <td class="tabular-nums">S/ {{ s.monto_ventas_efectivo|floatformat:2 }}</td>
+            <td class="tabular-nums">S/ {{ s.monto_ventas_digital|floatformat:2 }}</td>
+            <td class="tabular-nums" style="font-weight:700;">S/ {{ s.total_turno|floatformat:2 }}</td>
+            <td><span class="badge-trend {{ s.arqueo_clase }}">{{ s.arqueo_etiqueta }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-subtle);display:flex;justify-content:space-between;font-size:12.5px;">
+      <span style="color:var(--text-secondary);">Suma en sesiones de la fecha:</span>
+      <strong class="tabular-nums">S/ {{ total_sesiones_dia|floatformat:2 }}</strong>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:26px 16px;">
+      <h3>Sin sesiones de caja en esta fecha</h3>
+      <p>No se encontraron turnos abiertos o cerrados el {{ fecha_consulta|date:"d/m/Y" }}.</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<!-- =======================================================================
+     DETALLE DE PAGOS REGISTRADOS EN LA FECHA
+     ======================================================================= -->
+<section class="card" aria-label="Listado de transacciones del día">
+  <div class="card-header">
+    <div>
+      <h2 class="card-title">Transacciones de Pago del Día</h2>
+      <p class="card-meta" style="margin:2px 0 0;">Detalle cronológico de cobros registrados el {{ fecha_consulta|date:"d/m/Y" }}</p>
+    </div>
+    <span class="card-meta">{{ total_transacciones }} operación(es)</span>
+  </div>
+
+  {% if pagos_recientes %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Hora</th>
+          <th>Comanda</th>
+          <th>Mesa / Canal</th>
+          <th>Sesión Caja</th>
+          <th>Medio de Pago</th>
+          <th>Referencia</th>
+          <th>Propina</th>
+          <th>Monto Pagado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pagos_recientes %}
+        <tr>
+          <td class="tabular-nums">{{ p.fecha_pago|date:"H:i:s" }}</td>
+          <td><strong>Pedido #{{ p.pedido_id }}</strong></td>
+          <td>{% if p.mesa %}Mesa {{ p.mesa.numero }}{% else %}Para llevar{% endif %}</td>
+          <td>{% if p.sesion_caja_id %}Caja #{{ p.sesion_caja_id }}{% else %}—{% endif %}</td>
+          <td><span class="metodo-chip metodo-{{ p.metodo|lower }}">{{ p.get_metodo_display }}</span></td>
+          <td>{{ p.referencia|default:"—" }}</td>
+          <td class="tabular-nums">S/ {{ p.propina|floatformat:2 }}</td>
+          <td class="tabular-nums" style="font-weight:700;">S/ {{ p.monto|floatformat:2 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state" style="padding:28px 16px;">
+    <h3>No hay pagos registrados para esta fecha</h3>
+    <p>Selecciona otra fecha operativa o registra cobros en el turno activo.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

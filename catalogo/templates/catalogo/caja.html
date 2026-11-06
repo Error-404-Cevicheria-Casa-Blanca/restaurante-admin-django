@@ -1,0 +1,430 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Caja y Arqueo por Turno{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Cierre de Caja y Arqueo por Turno</h1>
+    <p class="page-subtitle">
+      Control de apertura de sesión, movimientos en tiempo real, arqueo físico de gaveta y Cierre Z
+    </p>
+  </div>
+
+  <div class="header-controls">
+    {% if sesion_abierta %}
+    <div class="live-pill">
+      <span class="live-pulse"></span>
+      <span>Caja #{{ sesion_abierta.id }} · ABIERTA</span>
+    </div>
+    {% else %}
+    <span class="status-badge is-soldout">Sin caja abierta</span>
+    {% endif %}
+    <a href="{% url 'catalogo:reportes' %}" class="btn btn-outline">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-3"/>
+      </svg>
+      Ver Reporte del Día
+    </a>
+  </div>
+</header>
+
+{% if sesion_abierta and resumen_actual %}
+<!-- =======================================================================
+     TURNO ACTIVO: KPIs DE GAVETA Y VENTAS EN CURSO
+     ======================================================================= -->
+<section class="operativo-panel" aria-label="Resumen del turno de caja activo">
+  <div class="operativo-header">
+    <div class="operativo-title-group">
+      <div class="live-pill">
+        <span class="live-pulse"></span>
+        <span>Turno Activo</span>
+      </div>
+      <div>
+        <h2 class="operativo-heading">Sesión de Caja #{{ sesion_abierta.id }} · Responsable: {{ sesion_abierta.cajero_nombre }}</h2>
+        <p class="operativo-subheading">
+          Apertura: {{ sesion_abierta.fecha_apertura|date:"d/m/Y H:i" }}
+          {% if sesion_abierta.observaciones %} · Nota: {{ sesion_abierta.observaciones }}{% endif %}
+        </p>
+      </div>
+    </div>
+    <div class="operativo-actions">
+      <span class="badge-trend neutral">{{ resumen_actual.total_movimientos }} pago(s) en el turno</span>
+    </div>
+  </div>
+
+  <div class="operativo-kpis-grid" style="margin-bottom:0;">
+    <article class="op-kpi-card">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-tables">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M12 10v6M9 13h6"/></svg>
+        </span>
+        <span class="op-kpi-badge neutral">Fondo base</span>
+      </div>
+      <div class="op-kpi-title">Monto inicial</div>
+      <div class="op-kpi-value">
+        <span class="currency">S/</span> {{ sesion_abierta.monto_inicial|floatformat:2 }}
+      </div>
+      <div class="op-kpi-foot">Efectivo de apertura en gaveta</div>
+    </article>
+
+    <article class="op-kpi-card">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-sales">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        </span>
+        <span class="op-kpi-badge up">Ingresa a gaveta</span>
+      </div>
+      <div class="op-kpi-title">Ventas en efectivo</div>
+      <div class="op-kpi-value">
+        <span class="currency">S/</span> {{ resumen_actual.efectivo|floatformat:2 }}
+      </div>
+      <div class="op-kpi-foot">Cobros netos en billetes y monedas</div>
+    </article>
+
+    <article class="op-kpi-card">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-orders">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+        </span>
+        <span class="op-kpi-badge neutral">Yape · Plin · Tarjeta</span>
+      </div>
+      <div class="op-kpi-title">Ventas digitales</div>
+      <div class="op-kpi-value">
+        <span class="currency">S/</span> {{ resumen_actual.ventas_digital|floatformat:2 }}
+      </div>
+      <div class="op-kpi-foot">
+        Total ventas turno: <strong>S/ {{ resumen_actual.total_ventas|floatformat:2 }}</strong>
+        {% if resumen_actual.total_propinas > 0 %} · Propinas: S/ {{ resumen_actual.total_propinas|floatformat:2 }}{% endif %}
+      </div>
+    </article>
+
+    <article class="op-kpi-card" style="border-color:#a7f3d0;background:#f0fdf4;">
+      <div class="op-kpi-header">
+        <span class="op-kpi-icon icon-sales">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>
+        </span>
+        <span class="op-kpi-badge up">Base Arqueo Z</span>
+      </div>
+      <div class="op-kpi-title">Monto esperado (Efectivo)</div>
+      <div class="op-kpi-value" id="caja-monto-esperado-display">
+        <span class="currency">S/</span> {{ resumen_actual.monto_esperado|floatformat:2 }}
+      </div>
+      <div class="op-kpi-foot">Fondo inicial + Ventas en efectivo</div>
+    </article>
+  </div>
+</section>
+
+<div class="caja-layout-grid">
+  <!-- Columna Izquierda: Desglose por Medio y Movimientos del Turno -->
+  <div style="display:flex;flex-direction:column;gap:18px;">
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Resumen por Medio de Pago (Turno #{{ sesion_abierta.id }})</h2>
+          <p class="card-meta" style="margin:2px 0 0;">Conciliación instantánea con cobros desde tablets y salón</p>
+        </div>
+        <span class="card-meta">Total turno: <strong>S/ {{ resumen_actual.total_ventas|floatformat:2 }}</strong></span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Medio de Pago</th>
+              <th>Operaciones</th>
+              <th>Propinas</th>
+              <th>Monto Neto</th>
+              <th>Participación</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in resumen_actual.desglose_metodos %}
+            <tr>
+              <td>
+                <span class="metodo-chip metodo-{{ m.codigo|lower }}">{{ m.nombre }}</span>
+              </td>
+              <td class="tabular-nums">{{ m.cantidad }}</td>
+              <td class="tabular-nums">S/ {{ m.propinas|floatformat:2 }}</td>
+              <td class="tabular-nums" style="font-weight:700;">S/ {{ m.monto|floatformat:2 }}</td>
+              <td style="min-width:120px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;">
+                  <span class="tabular-nums">{{ m.porcentaje }}%</span>
+                </div>
+                <div class="pay-bar-track">
+                  <div class="pay-bar-fill pay-fill-{{ m.codigo|lower }}" style="width:{{ m.porcentaje|floatformat:0 }}%;"></div>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Movimientos Registrados en el Turno</h2>
+          <p class="card-meta" style="margin:2px 0 0;">Últimos pagos vinculados a la sesión activa</p>
+        </div>
+        <span class="badge-trend neutral">{{ resumen_actual.total_movimientos }} movimiento(s)</span>
+      </div>
+
+      {% if resumen_actual.movimientos %}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Comanda / Origen</th>
+              <th>Medio</th>
+              <th>Referencia</th>
+              <th>Propina</th>
+              <th>Monto</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in resumen_actual.movimientos %}
+            <tr>
+              <td class="tabular-nums">{{ p.fecha_pago|date:"H:i:s" }}</td>
+              <td>
+                <strong>#{{ p.pedido_id }}</strong> ·
+                {% if p.mesa %}Mesa {{ p.mesa.numero }}{% else %}Para llevar{% endif %}
+              </td>
+              <td><span class="metodo-chip metodo-{{ p.metodo|lower }}">{{ p.get_metodo_display }}</span></td>
+              <td>{{ p.referencia|default:"—" }}</td>
+              <td class="tabular-nums">S/ {{ p.propina|floatformat:2 }}</td>
+              <td class="tabular-nums" style="font-weight:700;">S/ {{ p.monto|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state" style="padding:26px 16px;">
+        <h3>Sin cobros registrados aún en este turno</h3>
+        <p>Los pagos procesados desde el POS Android o el backend se reflejarán automáticamente aquí.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Columna Derecha: Formulario de Arqueo Físico y Cierre Z -->
+  <div class="card" style="align-self:start;">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title" style="font-size:16px;">Arqueo de Gaveta y Cierre Z</h2>
+        <p class="card-meta" style="margin:2px 0 0;">Cuenta el efectivo físico en caja para cerrar el turno</p>
+      </div>
+      <span class="badge-trend warn">Cierre Z</span>
+    </div>
+
+    <form method="post" action="{% url 'catalogo:caja_cerrar' %}" id="form-cierre-caja" data-esperado="{{ resumen_actual.monto_esperado }}">
+      {% csrf_token %}
+      <div class="form-group" style="margin-bottom:14px;">
+        <label class="form-label" for="{{ form_cierre.monto_real.id_for_label }}">
+          {{ form_cierre.monto_real.label }} *
+        </label>
+        {{ form_cierre.monto_real }}
+        {% if form_cierre.monto_real.errors %}
+        <div class="form-error">{{ form_cierre.monto_real.errors|join:" " }}</div>
+        {% endif %}
+        <span class="form-help">
+          Efectivo esperado en gaveta: <strong>S/ {{ resumen_actual.monto_esperado|floatformat:2 }}</strong>
+          (Inicial S/ {{ sesion_abierta.monto_inicial|floatformat:2 }} + Efectivo S/ {{ resumen_actual.efectivo|floatformat:2 }})
+        </span>
+      </div>
+
+      <div id="arqueo-live-preview" class="arqueo-preview-box is-cuadrado" aria-live="polite">
+        <div>
+          <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Resultado preliminar del arqueo</div>
+          <div id="arqueo-live-label" style="font-size:14.5px;font-weight:700;margin-top:2px;">
+            Cuadrado exacto · Diferencia S/ 0.00
+          </div>
+        </div>
+        <span id="arqueo-live-badge" class="badge-trend up">OK</span>
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label class="form-label" for="{{ form_cierre.observaciones.id_for_label }}">
+          {{ form_cierre.observaciones.label }}
+        </label>
+        {{ form_cierre.observaciones }}
+        {% if form_cierre.observaciones.errors %}
+        <div class="form-error">{{ form_cierre.observaciones.errors|join:" " }}</div>
+        {% endif %}
+        <span class="form-help">
+          Si existe sobrante o faltante respecto al monto esperado, la explicación es obligatoria.
+        </span>
+      </div>
+
+      <button type="submit" class="btn btn-primary" style="width:100%;padding:11px 16px;">
+        Confirmar Arqueo y Ejecutar Cierre Z
+      </button>
+    </form>
+  </div>
+</div>
+
+{% else %}
+<!-- =======================================================================
+     SIN CAJA ABIERTA: FORMULARIO DE APERTURA DE TURNO
+     ======================================================================= -->
+<section class="card" style="max-width:680px;margin-bottom:24px;">
+  <div class="card-header">
+    <div>
+      <h2 class="card-title" style="font-size:17px;">Apertura de Turno de Caja</h2>
+      <p class="card-meta" style="margin:3px 0 0;">
+        Registra el fondo inicial en efectivo para habilitar la sesión activa de cobros.
+        Solo se permite una sesión de caja abierta a la vez.
+      </p>
+    </div>
+    <span class="badge-trend up">Nueva sesión</span>
+  </div>
+
+  <form method="post" action="{% url 'catalogo:caja_abrir' %}">
+    {% csrf_token %}
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="{{ form_apertura.monto_inicial.id_for_label }}">
+          {{ form_apertura.monto_inicial.label }} *
+        </label>
+        {{ form_apertura.monto_inicial }}
+        {% if form_apertura.monto_inicial.errors %}
+        <div class="form-error">{{ form_apertura.monto_inicial.errors|join:" " }}</div>
+        {% endif %}
+        <span class="form-help">Monto de sencillo verificado al iniciar el turno (mínimo S/ 0.00).</span>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Operador responsable</label>
+        <input type="text" class="form-input" value="{{ request.user.username }}" disabled>
+        <span class="form-help">Se vinculará automáticamente al registro de auditoría.</span>
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label" for="{{ form_apertura.observaciones.id_for_label }}">
+          {{ form_apertura.observaciones.label }}
+        </label>
+        {{ form_apertura.observaciones }}
+        {% if form_apertura.observaciones.errors %}
+        <div class="form-error">{{ form_apertura.observaciones.errors|join:" " }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin-top:18px;">
+      <button type="submit" class="btn btn-primary" style="padding:10px 20px;">
+        Abrir Turno de Caja
+      </button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+<!-- =======================================================================
+     HISTORIAL DE SESIONES CERRADAS (CIERRES Z ANTERIORES)
+     ======================================================================= -->
+<section class="card" aria-label="Historial de cierres de caja">
+  <div class="card-header">
+    <div>
+      <h2 class="card-title">Historial de Arqueos y Cierres Z</h2>
+      <p class="card-meta" style="margin:2px 0 0;">Registro auditable de turnos cerrados, montos contados y diferencias</p>
+    </div>
+    <span class="card-meta">{{ historial_sesiones|length }} turno(s) cerrado(s)</span>
+  </div>
+
+  {% if historial_sesiones %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Sesión</th>
+          <th>Cajero</th>
+          <th>Apertura / Cierre</th>
+          <th>Inicial</th>
+          <th>Efectivo</th>
+          <th>Digital</th>
+          <th>Esperado</th>
+          <th>Contado</th>
+          <th>Resultado Arqueo</th>
+          <th>Observaciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in historial_sesiones %}
+        <tr>
+          <td><strong>#{{ s.id }}</strong></td>
+          <td>{{ s.cajero_nombre }}</td>
+          <td class="tabular-nums" style="font-size:12px;">
+            <div>Ap: {{ s.fecha_apertura|date:"d/m/Y H:i" }}</div>
+            <div style="color:var(--text-muted);">Ci: {{ s.fecha_cierre|date:"d/m/Y H:i"|default:"—" }}</div>
+          </td>
+          <td class="tabular-nums">S/ {{ s.monto_inicial|floatformat:2 }}</td>
+          <td class="tabular-nums">S/ {{ s.monto_ventas_efectivo|floatformat:2 }}</td>
+          <td class="tabular-nums">S/ {{ s.monto_ventas_digital|floatformat:2 }}</td>
+          <td class="tabular-nums" style="font-weight:600;">S/ {{ s.monto_esperado|floatformat:2 }}</td>
+          <td class="tabular-nums" style="font-weight:700;">S/ {{ s.monto_real|floatformat:2 }}</td>
+          <td>
+            <span class="badge-trend {{ s.arqueo_clase }}">{{ s.arqueo_etiqueta }}</span>
+          </td>
+          <td style="max-width:260px;font-size:12px;color:var(--text-secondary);">
+            {{ s.observaciones|default:"Sin observaciones" }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state" style="padding:28px 16px;">
+    <h3>Aún no hay cierres Z registrados</h3>
+    <p>Cuando cierres un turno de caja, aparecerá aquí con su monto esperado, efectivo contado y diferencia.</p>
+  </div>
+  {% endif %}
+</section>
+
+<script>
+(function () {
+  var form = document.getElementById("form-cierre-caja");
+  if (!form) return;
+  var esperado = parseFloat((form.getAttribute("data-esperado") || "0").replace(",", "."));
+  var inputReal = form.querySelector('input[name="monto_real"]');
+  var box = document.getElementById("arqueo-live-preview");
+  var label = document.getElementById("arqueo-live-label");
+  var badge = document.getElementById("arqueo-live-badge");
+  if (!inputReal || !box || !label || !badge || isNaN(esperado)) return;
+
+  function actualizarArqueo() {
+    var val = parseFloat((inputReal.value || "").replace(",", "."));
+    if (isNaN(val)) {
+      box.className = "arqueo-preview-box";
+      label.textContent = "Ingresa el monto contado en gaveta...";
+      badge.className = "badge-trend neutral";
+      badge.textContent = "Pendiente";
+      return;
+    }
+    var diff = Math.round((val - esperado) * 100) / 100;
+    if (diff === 0) {
+      box.className = "arqueo-preview-box is-cuadrado";
+      label.textContent = "Cuadrado exacto · Diferencia S/ 0.00";
+      badge.className = "badge-trend up";
+      badge.textContent = "Cuadrado";
+    } else if (diff > 0) {
+      box.className = "arqueo-preview-box is-sobrante";
+      label.textContent = "Sobrante en caja: +S/ " + diff.toFixed(2) + " (requiere observación)";
+      badge.className = "badge-trend warn";
+      badge.textContent = "Sobrante";
+    } else {
+      box.className = "arqueo-preview-box is-faltante";
+      label.textContent = "Faltante en caja: -S/ " + Math.abs(diff).toFixed(2) + " (requiere observación)";
+      badge.className = "badge-trend danger";
+      badge.textContent = "Faltante";
+    }
+  }
+
+  inputReal.addEventListener("input", actualizarArqueo);
+  actualizarArqueo();
+})();
+</script>
+{% endblock %}

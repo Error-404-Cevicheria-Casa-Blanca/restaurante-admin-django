@@ -52,4 +52,10 @@ urlpatterns = [
         views.cargar_carta_ejemplo_view,
         name="seed_demo",
     ),
+    # Cierre de caja y arqueo por turno (PRB-60)
+    path("caja/", views.caja_arqueo, name="caja"),
+    path("caja/abrir/", views.abrir_caja, name="caja_abrir"),
+    path("caja/cerrar/", views.cerrar_caja, name="caja_cerrar"),
+    # Reportes básicos de ventas y medios de pago (PRB-61)
+    path("reportes/", views.reportes_ventas, name="reportes"),
 ]

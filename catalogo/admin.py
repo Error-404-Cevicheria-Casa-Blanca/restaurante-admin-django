@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.db.models import Count
 from django.utils.translation import ngettext
 
-from .models import Categoria, Producto
+from .models import Categoria, Pago, Producto, SesionCaja
 
 
 @admin.register(Categoria)
@@ -125,3 +125,44 @@ class ProductoAdmin(admin.ModelAdmin):
             % filas_actualizadas,
             messages.WARNING,
         )
+
+
+@admin.register(SesionCaja)
+class SesionCajaAdmin(admin.ModelAdmin):
+    """Consulta administrativa de turnos de caja y cierres Z (PRB-60)."""
+
+    list_display = (
+        "id",
+        "estado",
+        "cajero_id",
+        "fecha_apertura",
+        "fecha_cierre",
+        "monto_inicial",
+        "monto_ventas_efectivo",
+        "monto_ventas_digital",
+        "monto_esperado",
+        "monto_real",
+        "diferencia",
+    )
+    list_filter = ("estado",)
+    ordering = ("-fecha_apertura",)
+
+
+@admin.register(Pago)
+class PagoAdmin(admin.ModelAdmin):
+    """Consulta administrativa de cobros por medio de pago (PRB-61)."""
+
+    list_display = (
+        "id",
+        "pedido",
+        "mesa",
+        "sesion_caja",
+        "metodo",
+        "monto",
+        "propina",
+        "referencia",
+        "fecha_pago",
+    )
+    list_filter = ("metodo",)
+    search_fields = ("referencia", "client_request_id")
+    ordering = ("-fecha_pago",)
