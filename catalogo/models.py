@@ -58,6 +58,21 @@ class Producto(models.Model):
         verbose_name="Disponible (pesca del día)",
         help_text="Indica si el plato cuenta con stock disponible según la pesca del día.",
     )
+    stock_disponible = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        verbose_name="Stock disponible del día",
+        help_text=(
+            "Cupo de porciones del día. Déjalo vacío para stock libre/ilimitado."
+        ),
+    )
+    stock_minimo = models.IntegerField(
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Alerta de stock mínimo",
+        help_text="Umbral opcional para mostrar alerta visual de pocas porciones.",
+    )
     categoria = models.ForeignKey(
         Categoria,
         on_delete=models.RESTRICT,
@@ -79,6 +94,22 @@ class Producto(models.Model):
         verbose_name = "Producto / Plato"
         verbose_name_plural = "Productos / Platos"
         ordering = ["categoria", "nombre"]
+
+    @property
+    def controla_stock(self):
+        """Indica si el plato tiene control numérico de cupo diario."""
+        return self.stock_disponible is not None
+
+    @property
+    def stock_bajo(self):
+        """Indica si el cupo actual está en umbral de alerta (>0 y <= stock_minimo)."""
+        return (
+            self.disponible
+            and self.stock_disponible is not None
+            and self.stock_disponible > 0
+            and (self.stock_minimo or 0) > 0
+            and self.stock_disponible <= self.stock_minimo
+        )
 
     def __str__(self):
         return f"{self.nombre} (S/ {self.precio})"
@@ -386,3 +417,146 @@ class Pago(models.Model):
     def __str__(self):
         origen = f"Mesa {self.mesa.numero}" if self.mesa else "Para llevar"
         return f"Pago #{self.id} ({self.metodo}) - S/ {self.monto} ({origen})"
+
+
+class DetallePedido(models.Model):
+    """Ítem o línea de plato dentro de una comanda (PRB-59).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'detalle_pedido' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    pedido = models.ForeignKey(
+        Pedido,
+        on_delete=models.CASCADE,
+        db_column="pedido_id",
+        related_name="detalles",
+        verbose_name="Pedido",
+    )
+    producto = models.ForeignKey(
+        Producto,
+        on_delete=models.RESTRICT,
+        db_column="producto_id",
+        related_name="detalles_pedido",
+        verbose_name="Producto",
+    )
+    precio_unitario = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+        verbose_name="Precio Unitario (S/)",
+    )
+    cantidad = models.IntegerField(
+        validators=[MinValueValidator(1)],
+        verbose_name="Cantidad",
+    )
+    notas = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Notas",
+    )
+    subtotal = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.00"))],
+        verbose_name="Subtotal (S/)",
+    )
+
+    class Meta:
+        db_table = "detalle_pedido"
+        managed = False
+        verbose_name = "Detalle de Pedido"
+        verbose_name_plural = "Detalles de Pedido"
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.cantidad}x {self.producto.nombre} (Pedido #{self.pedido_id})"
+
+
+class MovimientoStock(models.Model):
+    """Registro auditable de stock diario, descuentos por venta y reversiones (PRB-59).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'movimiento_stock' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    TIPO_CARGA_DIARIA = "CARGA_DIARIA"
+    TIPO_SALIDA_VENTA = "SALIDA_VENTA"
+    TIPO_REVERSION = "REVERSION"
+    TIPO_AJUSTE = "AJUSTE"
+
+    TIPOS_CHOICES = [
+        (TIPO_CARGA_DIARIA, "Carga diaria"),
+        (TIPO_SALIDA_VENTA, "Salida por pedido"),
+        (TIPO_REVERSION, "Reversión por anulación"),
+        (TIPO_AJUSTE, "Ajuste manual"),
+    ]
+
+    producto = models.ForeignKey(
+        Producto,
+        on_delete=models.CASCADE,
+        db_column="producto_id",
+        related_name="movimientos_stock",
+        verbose_name="Plato",
+    )
+    pedido = models.ForeignKey(
+        Pedido,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="pedido_id",
+        related_name="movimientos_stock",
+        verbose_name="Pedido asociado",
+    )
+    tipo = models.CharField(
+        max_length=20,
+        choices=TIPOS_CHOICES,
+        verbose_name="Tipo de movimiento",
+    )
+    cantidad = models.IntegerField(
+        validators=[MinValueValidator(0)],
+        verbose_name="Cantidad",
+    )
+    stock_anterior = models.IntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Stock anterior",
+    )
+    stock_resultante = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        verbose_name="Stock resultante",
+    )
+    motivo = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Motivo / Referencia",
+    )
+    registrado_por = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        verbose_name="Registrado por",
+    )
+    fecha = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Fecha y hora",
+    )
+
+    class Meta:
+        db_table = "movimiento_stock"
+        managed = False
+        verbose_name = "Movimiento de Stock"
+        verbose_name_plural = "Movimientos de Stock"
+        ordering = ["-fecha", "-id"]
+
+    def __str__(self):
+        res = (
+            "Ilimitado"
+            if self.stock_resultante is None
+            else f"{self.stock_resultante} porc."
+        )
+        return f"[{self.tipo}] {self.producto.nombre}: {self.cantidad} -> {res}"

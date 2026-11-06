@@ -40,6 +40,34 @@ class CategoriaForm(forms.ModelForm):
 class ProductoForm(forms.ModelForm):
     """Formulario para alta y edición de platos marinos, precios y stock."""
 
+    stock_disponible = forms.IntegerField(
+        required=False,
+        min_value=0,
+        label="Stock disponible del día (porciones)",
+        widget=forms.NumberInput(
+            attrs={
+                "class": "form-input",
+                "min": "0",
+                "step": "1",
+                "placeholder": "Vacío = ilimitado (ej. 25)",
+            }
+        ),
+    )
+    stock_minimo = forms.IntegerField(
+        required=False,
+        min_value=0,
+        initial=0,
+        label="Alerta de stock mínimo",
+        widget=forms.NumberInput(
+            attrs={
+                "class": "form-input",
+                "min": "0",
+                "step": "1",
+                "placeholder": "0",
+            }
+        ),
+    )
+
     class Meta:
         model = Producto
         fields = [
@@ -47,6 +75,8 @@ class ProductoForm(forms.ModelForm):
             "categoria",
             "descripcion",
             "precio",
+            "stock_disponible",
+            "stock_minimo",
             "disponible",
             "imagen_url",
         ]
@@ -97,9 +127,30 @@ class ProductoForm(forms.ModelForm):
             raise ValidationError("El precio debe ser mayor a S/ 0.00.")
         return precio.quantize(Decimal("0.01"))
 
+    def clean_stock_minimo(self):
+        val = self.cleaned_data.get("stock_minimo")
+        if val is None:
+            if (
+                self.instance
+                and self.instance.pk
+                and self.instance.stock_minimo is not None
+            ):
+                return self.instance.stock_minimo
+            return 0
+        if val < 0:
+            raise ValidationError("El stock mínimo no puede ser negativo.")
+        return val
+
     def clean_imagen_url(self):
         url = (self.cleaned_data.get("imagen_url") or "").strip()
         return url or None
+
+    def clean(self):
+        cleaned = super().clean()
+        stock = cleaned.get("stock_disponible")
+        if stock is not None and stock == 0:
+            cleaned["disponible"] = False
+        return cleaned
 
 
 class AperturaCajaForm(forms.Form):

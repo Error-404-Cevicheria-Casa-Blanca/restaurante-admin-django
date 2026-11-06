@@ -58,4 +58,21 @@ urlpatterns = [
     path("caja/cerrar/", views.cerrar_caja, name="caja_cerrar"),
     # Reportes básicos de ventas y medios de pago (PRB-61)
     path("reportes/", views.reportes_ventas, name="reportes"),
+    # Inventario reducido: stock del día, descuento y reversión (PRB-59)
+    path("stock-del-dia/", views.stock_del_dia, name="stock_dia"),
+    path(
+        "platos/<int:pk>/fijar-stock/",
+        views.fijar_stock_plato,
+        name="plato_fijar_stock",
+    ),
+    path(
+        "platos/<int:pk>/ajustar-stock/",
+        views.ajustar_stock_plato,
+        name="plato_ajustar_stock",
+    ),
+    path(
+        "stock-del-dia/carga-masiva/",
+        views.carga_masiva_stock,
+        name="stock_carga_masiva",
+    ),
 ]

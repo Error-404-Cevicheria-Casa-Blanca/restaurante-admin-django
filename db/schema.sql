@@ -35,6 +35,8 @@ CREATE TABLE producto (
     descripcion TEXT,
     precio NUMERIC(10,2) NOT NULL CHECK (precio > 0),
     disponible BOOLEAN NOT NULL DEFAULT TRUE,
+    stock_disponible INT CHECK (stock_disponible IS NULL OR stock_disponible >= 0),
+    stock_minimo INT NOT NULL DEFAULT 0 CHECK (stock_minimo >= 0),
     categoria_id INT NOT NULL REFERENCES categoria(id) ON DELETE RESTRICT,
     imagen_url VARCHAR(255)
 );
@@ -146,4 +148,23 @@ CREATE TABLE impresion_cola (
 );
 
 CREATE INDEX idx_impresion_pendiente ON impresion_cola(estado, fecha_creacion);
+
+-- =============================================================================
+-- TABLA: movimiento_stock (Trazabilidad de stock del día, descuentos y reversiones - PRB-59)
+-- =============================================================================
+CREATE TABLE movimiento_stock (
+    id SERIAL PRIMARY KEY,
+    producto_id INT NOT NULL REFERENCES producto(id) ON DELETE CASCADE,
+    pedido_id INT REFERENCES pedido(id) ON DELETE SET NULL,
+    tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('CARGA_DIARIA', 'SALIDA_VENTA', 'REVERSION', 'AJUSTE')),
+    cantidad INT NOT NULL CHECK (cantidad >= 0),
+    stock_anterior INT,
+    stock_resultante INT CHECK (stock_resultante IS NULL OR stock_resultante >= 0),
+    motivo VARCHAR(255),
+    registrado_por VARCHAR(100),
+    fecha TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_movimiento_stock_producto ON movimiento_stock(producto_id, fecha);
+CREATE INDEX idx_movimiento_stock_pedido ON movimiento_stock(pedido_id, tipo);
 

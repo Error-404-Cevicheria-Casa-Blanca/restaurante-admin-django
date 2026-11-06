@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.db.models import Count
 from django.utils.translation import ngettext
 
-from .models import Categoria, Pago, Producto, SesionCaja
+from .models import Categoria, MovimientoStock, Pago, Producto, SesionCaja
 
 
 @admin.register(Categoria)
@@ -40,10 +40,13 @@ class ProductoAdmin(admin.ModelAdmin):
         "nombre",
         "categoria",
         "precio",
+        "stock_disponible",
+        "stock_minimo",
         "disponible",
     )
     list_editable = (
         "precio",
+        "stock_disponible",
         "disponible",
     )
     list_filter = (
@@ -76,11 +79,13 @@ class ProductoAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "precio",
+                    "stock_disponible",
+                    "stock_minimo",
                     "disponible",
                 ),
                 "description": (
-                    "Ajuste de precio en soles y activación/desactivación del stock "
-                    "según la pesca del día."
+                    "Ajuste de precio en soles, cupo diario de porciones y "
+                    "activación/desactivación del stock según la pesca del día."
                 ),
             },
         ),
@@ -166,3 +171,24 @@ class PagoAdmin(admin.ModelAdmin):
     list_filter = ("metodo",)
     search_fields = ("referencia", "client_request_id")
     ordering = ("-fecha_pago",)
+
+
+@admin.register(MovimientoStock)
+class MovimientoStockAdmin(admin.ModelAdmin):
+    """Consulta administrativa del kardex de stock del día (PRB-59)."""
+
+    list_display = (
+        "id",
+        "fecha",
+        "producto",
+        "tipo",
+        "cantidad",
+        "stock_anterior",
+        "stock_resultante",
+        "pedido",
+        "registrado_por",
+        "motivo",
+    )
+    list_filter = ("tipo",)
+    search_fields = ("producto__nombre", "motivo", "registrado_por")
+    ordering = ("-fecha", "-id")

@@ -153,11 +153,21 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 descripcion TEXT,
                 precio NUMERIC(10, 2) NOT NULL CHECK (precio > 0),
                 disponible BOOLEAN NOT NULL DEFAULT 1,
+                stock_disponible INTEGER CHECK (stock_disponible IS NULL OR stock_disponible >= 0),
+                stock_minimo INTEGER NOT NULL DEFAULT 0 CHECK (stock_minimo >= 0),
                 categoria_id INTEGER NOT NULL
                     REFERENCES categoria(id) ON DELETE RESTRICT,
                 imagen_url VARCHAR(255)
             );
             """)
+        for col_def in (
+            "stock_disponible INTEGER",
+            "stock_minimo INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                cur.execute(f"ALTER TABLE producto ADD COLUMN {col_def}")
+            except Exception:
+                pass
         cur.execute("""
             CREATE TABLE IF NOT EXISTS mesa (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,6 +267,31 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 error TEXT,
                 fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 fecha_impresion TIMESTAMP
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS detalle_pedido (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id INTEGER NOT NULL REFERENCES pedido(id) ON DELETE CASCADE,
+                producto_id INTEGER NOT NULL REFERENCES producto(id) ON DELETE RESTRICT,
+                precio_unitario NUMERIC(10, 2) NOT NULL CHECK (precio_unitario > 0),
+                cantidad INTEGER NOT NULL CHECK (cantidad >= 1),
+                notas VARCHAR(255),
+                subtotal NUMERIC(10, 2) NOT NULL CHECK (subtotal >= 0)
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS movimiento_stock (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                producto_id INTEGER NOT NULL REFERENCES producto(id) ON DELETE CASCADE,
+                pedido_id INTEGER REFERENCES pedido(id) ON DELETE SET NULL,
+                tipo VARCHAR(20) NOT NULL,
+                cantidad INTEGER NOT NULL CHECK (cantidad >= 0),
+                stock_anterior INTEGER,
+                stock_resultante INTEGER,
+                motivo VARCHAR(255),
+                registrado_por VARCHAR(100),
+                fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """)
     _TABLAS_ASEGURADAS.add(using)

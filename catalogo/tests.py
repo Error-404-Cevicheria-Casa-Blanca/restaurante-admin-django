@@ -14,7 +14,25 @@ from django.db import connection
 from django.test import SimpleTestCase, TestCase
 
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
-from catalogo.models import Categoria, Mesa, Pago, Pedido, Producto, SesionCaja
+from catalogo.models import (
+    Categoria,
+    DetallePedido,
+    Mesa,
+    MovimientoStock,
+    Pago,
+    Pedido,
+    Producto,
+    SesionCaja,
+)
+from catalogo.stock_service import (
+    StockInsuficienteError,
+    ajustar_stock_producto,
+    descontar_stock_pedido,
+    fijar_stock_diario,
+    revertir_stock_item,
+    revertir_stock_pedido,
+    sincronizar_stock_con_pedidos,
+)
 
 RUTA_PROYECTO = str(settings.BASE_DIR)
 
@@ -143,6 +161,10 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(SesionCaja)
         if Pago._meta.db_table not in existentes:
             editor.create_model(Pago)
+        if DetallePedido._meta.db_table not in existentes:
+            editor.create_model(DetallePedido)
+        if MovimientoStock._meta.db_table not in existentes:
+            editor.create_model(MovimientoStock)
 
 
 class CatalogoModelTests(TestCase):
@@ -1022,3 +1044,291 @@ class ReportesVentasTests(TestCase):
         resp_invalida = self.client.get("/reportes/?fecha=fecha-invalida")
         self.assertEqual(resp_invalida.status_code, 200)
         self.assertTrue(resp_invalida.context["es_hoy"])
+
+
+# =============================================================================
+# Pruebas de Inventario Reducido: Stock del Día, Descuento y Reversión (PRB-59)
+# =============================================================================
+
+
+class StockDelDiaTests(TestCase):
+    """Pruebas unitarias e integrales de stock diario, descuento y reversión (PRB-59)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="chef_stock",
+            password="PasswordSegura123!",
+            is_staff=True,
+        )
+        self.cat_ceviches = Categoria.objects.create(nombre="Ceviches Stock")
+        self.cat_bebidas = Categoria.objects.create(nombre="Bebidas Stock")
+
+        self.ceviche = Producto.objects.create(
+            nombre="Ceviche de Conchas Negras",
+            precio=Decimal("56.00"),
+            disponible=True,
+            stock_disponible=5,
+            stock_minimo=2,
+            categoria=self.cat_ceviches,
+        )
+        self.tiradito = Producto.objects.create(
+            nombre="Tiradito al Ají Amarillo",
+            precio=Decimal("49.00"),
+            disponible=True,
+            stock_disponible=3,
+            stock_minimo=1,
+            categoria=self.cat_ceviches,
+        )
+        self.chicha = Producto.objects.create(
+            nombre="Chicha Morada 1L",
+            precio=Decimal("16.00"),
+            disponible=True,
+            stock_disponible=None,
+            stock_minimo=0,
+            categoria=self.cat_bebidas,
+        )
+        self.mesa = Mesa.objects.create(
+            numero=12,
+            capacidad=4,
+            ubicacion="Segundo piso",
+            estado=Mesa.ESTADO_OCUPADA,
+        )
+
+    def test_fijar_stock_diario_y_propiedades_alerta(self):
+        """PRB-59: Fijar cupo actualiza disponible, alerta de bajo stock y kardex."""
+        plato, mov = fijar_stock_diario(
+            self.ceviche.id,
+            stock_disponible=2,
+            stock_minimo=2,
+            motivo="Ingreso matutino de conchas",
+            registrado_por="chef_stock",
+        )
+        self.assertEqual(plato.stock_disponible, 2)
+        self.assertTrue(plato.disponible)
+        self.assertTrue(plato.controla_stock)
+        self.assertTrue(plato.stock_bajo)
+        self.assertEqual(mov.tipo, MovimientoStock.TIPO_CARGA_DIARIA)
+
+        plato_cero, _ = fijar_stock_diario(self.ceviche.id, stock_disponible=0)
+        self.assertEqual(plato_cero.stock_disponible, 0)
+        self.assertFalse(plato_cero.disponible)
+
+        plato_libre, _ = fijar_stock_diario(self.ceviche.id, stock_disponible=None)
+        self.assertIsNone(plato_libre.stock_disponible)
+        self.assertTrue(plato_libre.disponible)
+        self.assertFalse(plato_libre.controla_stock)
+
+    def test_descuento_transaccional_idempotente_y_agotamiento_en_cero(self):
+        """PRB-59: Descuenta cupo exacto, ignora ilimitados, agota en 0 y es idempotente."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("296.00"),
+        )
+        items = [
+            {"producto_id": self.ceviche.id, "cantidad": 5},
+            {"producto_id": self.chicha.id, "cantidad": 1},
+        ]
+        movs_1 = descontar_stock_pedido(pedido.id, items=items)
+        self.assertEqual(len(movs_1), 1)
+
+        self.ceviche.refresh_from_db()
+        self.chicha.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 0)
+        self.assertFalse(self.ceviche.disponible)
+        self.assertIsNone(self.chicha.stock_disponible)
+        self.assertTrue(self.chicha.disponible)
+
+        # Reintento idempotente con el mismo pedido_id no vuelve a descontar
+        movs_2 = descontar_stock_pedido(pedido.id, items=items)
+        self.assertEqual([m.id for m in movs_1], [m.id for m in movs_2])
+
+    def test_descuento_stock_insuficiente_hace_rollback_total(self):
+        """PRB-59: Si un ítem supera el cupo disponible, ningún plato se descuenta."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("300.00"),
+        )
+        items = [
+            {"producto_id": self.ceviche.id, "cantidad": 2},
+            {"producto_id": self.tiradito.id, "cantidad": 4},  # Solo hay 3 disponibles
+        ]
+        with self.assertRaises(StockInsuficienteError) as ctx:
+            descontar_stock_pedido(pedido.id, items=items)
+
+        self.assertEqual(ctx.exception.codigo, "STOCK_INSUFICIENTE")
+        self.assertEqual(len(ctx.exception.detalles), 1)
+        self.assertEqual(ctx.exception.detalles[0]["producto_id"], self.tiradito.id)
+
+        self.ceviche.refresh_from_db()
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 5)
+        self.assertEqual(self.tiradito.stock_disponible, 3)
+        self.assertEqual(MovimientoStock.objects.filter(pedido=pedido).count(), 0)
+
+    def test_reversion_stock_pedido_anulado_reactiva_plato_agotado_e_idempotencia(self):
+        """PRB-59: Revertir pedido restaura cupo, reactiva plato desde 0 y es idempotente."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("147.00"),
+        )
+        descontar_stock_pedido(
+            pedido.id,
+            items=[{"producto_id": self.tiradito.id, "cantidad": 3}],
+        )
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.tiradito.stock_disponible, 0)
+        self.assertFalse(self.tiradito.disponible)
+
+        pedido.estado = Pedido.ESTADO_ANULADO
+        pedido.save(update_fields=["estado"])
+
+        revs_1 = revertir_stock_pedido(pedido.id, motivo="Cliente se retiró")
+        self.assertEqual(len(revs_1), 1)
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.tiradito.stock_disponible, 3)
+        self.assertTrue(self.tiradito.disponible)
+
+        # Segunda llamada es no-op idempotente (no infla el stock a 6)
+        revs_2 = revertir_stock_pedido(pedido.id, motivo="Reintento duplicado")
+        self.assertEqual(revs_2, [])
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.tiradito.stock_disponible, 3)
+
+    def test_reversion_parcial_por_item_individual(self):
+        """PRB-59: Revertir un ítem individual restaura solo la cantidad anulada."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_COCINANDO,
+            total=Decimal("224.00"),
+        )
+        descontar_stock_pedido(
+            pedido.id,
+            items=[{"producto_id": self.ceviche.id, "cantidad": 4}],
+        )
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 1)
+
+        mov = revertir_stock_item(pedido.id, self.ceviche.id, cantidad=2)
+        self.assertIsNotNone(mov)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 3)
+
+    def test_sincronizacion_automatica_pedidos_pos_y_anulaciones(self):
+        """PRB-59: Concilia automáticamente DetallePedido y ANULADO escritos desde Java."""
+        fijar_stock_diario(self.ceviche.id, stock_disponible=4, stock_minimo=1)
+
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=2,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("224.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=pedido,
+            producto=self.ceviche,
+            precio_unitario=Decimal("56.00"),
+            cantidad=4,
+            subtotal=Decimal("224.00"),
+        )
+
+        res_1 = sincronizar_stock_con_pedidos()
+        self.assertEqual(res_1["descuentos"], 1)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 0)
+        self.assertFalse(self.ceviche.disponible)
+
+        # Ejecutar de nuevo sin cambios es idempotente
+        res_2 = sincronizar_stock_con_pedidos()
+        self.assertEqual(res_2["descuentos"], 0)
+        self.assertEqual(res_2["reversiones"], 0)
+
+        # Java anula el pedido -> el sincronizador restaura las 4 porciones y reactiva
+        pedido.estado = Pedido.ESTADO_ANULADO
+        pedido.save(update_fields=["estado"])
+        res_3 = sincronizar_stock_con_pedidos()
+        self.assertEqual(res_3["reversiones"], 1)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 4)
+        self.assertTrue(self.ceviche.disponible)
+
+    def test_panel_web_stock_dia_fijar_ajustar_y_carga_masiva(self):
+        """PRB-59: Flujo web completo en /stock-del-dia/, ajustes +/- y carga masiva."""
+        self.client.force_login(self.staff_user)
+
+        resp_get = self.client.get("/stock-del-dia/")
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertContains(resp_get, "Stock del Día")
+        self.assertEqual(resp_get.context["kpis_stock"]["con_cupo"], 2)
+
+        # Fijar cupo individual por JSON/AJAX
+        resp_json = self.client.post(
+            f"/platos/{self.ceviche.id}/fijar-stock/",
+            {"stock_disponible": "12", "stock_minimo": "3"},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_json.status_code, 200)
+        self.assertEqual(resp_json.json()["stock_disponible"], 12)
+
+        # Ajuste relativo (-2 porciones)
+        resp_aj = self.client.post(
+            f"/platos/{self.ceviche.id}/ajustar-stock/",
+            {"delta": "-2", "motivo": "Degustación"},
+        )
+        self.assertEqual(resp_aj.status_code, 302)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 10)
+
+        # Carga masiva sobre categoría Ceviches
+        resp_masiva = self.client.post(
+            "/stock-del-dia/carga-masiva/",
+            {
+                "accion": "fijar_cupo",
+                "categoria_id": str(self.cat_ceviches.id),
+                "cupo": "20",
+                "stock_minimo": "4",
+            },
+        )
+        self.assertEqual(resp_masiva.status_code, 302)
+        self.ceviche.refresh_from_db()
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 20)
+        self.assertEqual(self.tiradito.stock_disponible, 20)
+
+    def test_toggle_disponibilidad_bloquea_activar_plato_con_stock_cero(self):
+        """PRB-59: Impide reactivar manualmente un plato cuyo cupo diario está en 0."""
+        self.client.force_login(self.staff_user)
+        fijar_stock_diario(self.tiradito.id, stock_disponible=0)
+
+        resp_json = self.client.post(
+            f"/platos/{self.tiradito.id}/toggle-disponibilidad/",
+            {"disponible": "true"},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_json.status_code, 409)
+        self.tiradito.refresh_from_db()
+        self.assertFalse(self.tiradito.disponible)
+        self.assertEqual(self.tiradito.stock_disponible, 0)
+
+    def test_ajustar_stock_producto_impide_quedar_en_negativo(self):
+        """PRB-59: El ajuste directo suma/resta porciones y rechaza saldos negativos."""
+        plato, mov = ajustar_stock_producto(
+            self.tiradito.id, delta=2, motivo="Nuevo ingreso"
+        )
+        self.assertEqual(plato.stock_disponible, 5)
+        self.assertEqual(mov.tipo, MovimientoStock.TIPO_AJUSTE)
+
+        with self.assertRaises(ValidationError):
+            ajustar_stock_producto(self.tiradito.id, delta=-10)

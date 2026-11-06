@@ -1,0 +1,303 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Stock del Día{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Stock del Día (Inventario Reducido)</h1>
+    <p class="page-subtitle">
+      Control directo de porciones diarias por plato marino, alertas de agotamiento, descuento por comandas y reversión ante anulaciones
+    </p>
+  </div>
+  <div class="header-controls">
+    <a href="{% url 'catalogo:pesca_dia' %}" class="btn btn-outline">Ir a Pesca del Día</a>
+    <a href="{% url 'catalogo:platos_list' %}" class="btn btn-outline">Catálogo completo</a>
+  </div>
+</header>
+
+<!-- Tira de KPIs de Stock del Día -->
+<section class="summary-strip">
+  <div class="strip-item">
+    Total carta: <strong>{{ kpis_stock.total_platos }}</strong> platos
+  </div>
+  <div class="strip-item">
+    Con cupo numérico: <strong style="color:#2563eb;">{{ kpis_stock.con_cupo }}</strong>
+  </div>
+  <div class="strip-item">
+    Porciones en turno: <strong style="color:#059669;" class="tabular-nums">{{ kpis_stock.porciones_totales }}</strong>
+  </div>
+  <div class="strip-item">
+    Alerta bajo stock: <strong style="color:#d97706;">{{ kpis_stock.bajo_stock }}</strong>
+  </div>
+  <div class="strip-item">
+    Agotados hoy: <strong style="color:#dc2626;">{{ kpis_stock.agotados }}</strong>
+  </div>
+  <div class="strip-item">
+    Stock libre (ilimitado): <strong>{{ kpis_stock.ilimitados }}</strong>
+  </div>
+</section>
+
+<!-- Carga Masiva de Inicio de Turno -->
+<section class="card" style="margin-bottom:18px;">
+  <div class="card-header" style="margin-bottom:10px;">
+    <div>
+      <h2 class="card-title">Carga rápida de inicio de turno</h2>
+      <span class="card-meta">Asigna un cupo inicial de porciones o restablece stock libre por categoría</span>
+    </div>
+  </div>
+  <form method="post" action="{% url 'catalogo:stock_carga_masiva' %}"
+        style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+    {% csrf_token %}
+    <div>
+      <label class="form-label" for="carga-categoria">Alcance</label>
+      <select id="carga-categoria" name="categoria_id" class="form-select" style="min-width:210px;">
+        <option value="">Toda la carta ({{ kpis_stock.total_platos }})</option>
+        {% for cat in categorias %}
+        <option value="{{ cat.id }}">{{ cat.nombre }} ({{ cat.total_platos }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="form-label" for="carga-cupo">Porciones del día</label>
+      <input id="carga-cupo" type="number" name="cupo" min="0" step="1" placeholder="Ej. 25"
+             class="form-input" style="width:140px;">
+    </div>
+    <div>
+      <label class="form-label" for="carga-minimo">Alerta mín. (opc.)</label>
+      <input id="carga-minimo" type="number" name="stock_minimo" min="0" step="1" placeholder="Ej. 5"
+             class="form-input" style="width:140px;">
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button type="submit" name="accion" value="fijar_cupo" class="btn btn-primary">
+        Cargar cupo del día
+      </button>
+      <button type="submit" name="accion" value="modo_libre" class="btn btn-outline">
+        Pasar a stock libre
+      </button>
+    </div>
+  </form>
+</section>
+
+<!-- Filtros de Consulta -->
+<form method="get" class="toolbar-card">
+  <div class="search-box">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+    </svg>
+    <input type="text" name="q" value="{{ busqueda }}" placeholder="Buscar plato o categoría...">
+  </div>
+
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <select name="categoria" class="form-select" style="width:auto;padding:7px 12px;font-size:13px;">
+      <option value="">Todas las categorías</option>
+      {% for cat in categorias %}
+      <option value="{{ cat.id }}" {% if categoria_activa == cat.id %}selected{% endif %}>
+        {{ cat.nombre }} ({{ cat.total_platos }})
+      </option>
+      {% endfor %}
+    </select>
+
+    <select name="modo" class="form-select" style="width:auto;padding:7px 12px;font-size:13px;">
+      <option value="todos" {% if modo_filtro == 'todos' %}selected{% endif %}>Todos los platos</option>
+      <option value="con_cupo" {% if modo_filtro == 'con_cupo' %}selected{% endif %}>Con cupo numérico</option>
+      <option value="bajo_stock" {% if modo_filtro == 'bajo_stock' %}selected{% endif %}>Alerta bajo stock</option>
+      <option value="agotados" {% if modo_filtro == 'agotados' %}selected{% endif %}>Agotados hoy</option>
+      <option value="ilimitados" {% if modo_filtro == 'ilimitados' %}selected{% endif %}>Stock libre (ilimitado)</option>
+    </select>
+
+    <button type="submit" class="btn btn-outline">Filtrar</button>
+    {% if busqueda or categoria_activa or modo_filtro != 'todos' %}
+    <a href="{% url 'catalogo:stock_dia' %}" class="btn btn-outline">Limpiar</a>
+    {% endif %}
+  </div>
+</form>
+
+<!-- Tabla Operativa de Stock por Producto -->
+<section class="card" style="margin-bottom:20px;">
+  <div class="card-header" style="margin-bottom:12px;">
+    <div>
+      <h2 class="card-title">Control de porciones por plato</h2>
+      <span class="card-meta">Al llegar a 0 porciones el plato pasa automáticamente a AGOTADO en carta y tablets</span>
+    </div>
+  </div>
+
+  {% if platos %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Plato marino</th>
+          <th>Categoría</th>
+          <th>Estado actual</th>
+          <th>Definir cupo / Alerta mín.</th>
+          <th style="text-align:right;">Ajustes rápidos</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for plato in platos %}
+        <tr>
+          <td>
+            <div class="dish-name">{{ plato.nombre }}</div>
+            <div class="card-meta tabular-nums">S/ {{ plato.precio|floatformat:2 }}</div>
+          </td>
+          <td>
+            <span class="cat-chip">{{ plato.categoria.nombre }}</span>
+          </td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="status-badge {% if plato.disponible %}is-available{% else %}is-soldout{% endif %}">
+                {% if plato.disponible %}Disponible{% else %}Agotado{% endif %}
+              </span>
+              {% if plato.stock_disponible is None %}
+                <span class="stock-pill stock-pill-free">Stock libre</span>
+              {% elif plato.stock_disponible == 0 %}
+                <span class="stock-pill stock-pill-zero">0 porciones</span>
+              {% elif plato.stock_bajo %}
+                <span class="stock-pill stock-pill-low">
+                  ¡Quedan {{ plato.stock_disponible }}! (mín. {{ plato.stock_minimo }})
+                </span>
+              {% else %}
+                <span class="stock-pill stock-pill-ok">
+                  {{ plato.stock_disponible }} porciones
+                  {% if plato.stock_minimo > 0 %}(mín. {{ plato.stock_minimo }}){% endif %}
+                </span>
+              {% endif %}
+            </div>
+          </td>
+          <td>
+            <form method="post" action="{% url 'catalogo:plato_fijar_stock' plato.id %}"
+                  style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <input type="number"
+                     name="stock_disponible"
+                     min="0"
+                     step="1"
+                     value="{% if plato.stock_disponible is not None %}{{ plato.stock_disponible }}{% endif %}"
+                     placeholder="Libre"
+                     class="price-input"
+                     style="width:76px;"
+                     aria-label="Stock diario de {{ plato.nombre }}">
+              <input type="number"
+                     name="stock_minimo"
+                     min="0"
+                     step="1"
+                     value="{{ plato.stock_minimo }}"
+                     placeholder="Mín."
+                     class="price-input"
+                     style="width:66px;"
+                     title="Alerta de stock mínimo"
+                     aria-label="Stock mínimo de {{ plato.nombre }}">
+              <button type="submit" class="btn btn-sm btn-outline">Fijar</button>
+              {% if plato.stock_disponible is not None %}
+              <button type="submit" name="ilimitado" value="1" class="btn btn-sm btn-outline"
+                      title="Quitar límite numérico">Libre</button>
+              {% endif %}
+            </form>
+          </td>
+          <td style="text-align:right;white-space:nowrap;">
+            <div style="display:inline-flex;gap:5px;align-items:center;">
+              <form method="post" action="{% url 'catalogo:plato_ajustar_stock' plato.id %}" style="display:inline;">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <input type="hidden" name="delta" value="5">
+                <input type="hidden" name="motivo" value="Reposición rápida (+5)">
+                <button type="submit" class="btn btn-sm btn-success-soft" title="Sumar 5 porciones">+5</button>
+              </form>
+              <form method="post" action="{% url 'catalogo:plato_ajustar_stock' plato.id %}" style="display:inline;">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <input type="hidden" name="delta" value="1">
+                <input type="hidden" name="motivo" value="Reposición rápida (+1)">
+                <button type="submit" class="btn btn-sm btn-outline" title="Sumar 1 porción">+1</button>
+              </form>
+              {% if plato.stock_disponible is not None and plato.stock_disponible > 0 %}
+              <form method="post" action="{% url 'catalogo:plato_ajustar_stock' plato.id %}" style="display:inline;">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <input type="hidden" name="delta" value="-1">
+                <input type="hidden" name="motivo" value="Descuento manual (-1)">
+                <button type="submit" class="btn btn-sm btn-outline" title="Descontar 1 porción">-1</button>
+              </form>
+              {% endif %}
+              <form method="post" action="{% url 'catalogo:plato_fijar_stock' plato.id %}" style="display:inline;">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <input type="hidden" name="stock_disponible" value="0">
+                <input type="hidden" name="motivo" value="Agotado manualmente en turno">
+                <button type="submit" class="btn btn-sm btn-warning-soft" title="Fijar en 0 porciones (Agotar)">Agotar</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <h3>No se encontraron platos para este filtro</h3>
+    <p>Limpia los criterios de búsqueda o carga platos en el catálogo.</p>
+  </div>
+  {% endif %}
+</section>
+
+<!-- Kardex / Trazabilidad de Movimientos de Stock -->
+<section class="card">
+  <div class="card-header" style="margin-bottom:12px;">
+    <div>
+      <h2 class="card-title">Kardex reciente de stock del día</h2>
+      <span class="card-meta">Auditoría de cargas iniciales, consumos de pedidos, reversiones por anulación y ajustes</span>
+    </div>
+  </div>
+
+  {% if movimientos_recientes %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Fecha / Hora</th>
+          <th>Plato</th>
+          <th>Movimiento</th>
+          <th>Cantidad</th>
+          <th>Transición de cupo</th>
+          <th>Pedido</th>
+          <th>Usuario / Motivo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for mov in movimientos_recientes %}
+        <tr>
+          <td class="tabular-nums card-meta">{{ mov.fecha|date:"d/m/Y H:i:s" }}</td>
+          <td><strong>{{ mov.producto.nombre }}</strong></td>
+          <td>
+            <span class="mov-tipo-chip mov-tipo-{{ mov.tipo|lower }}">
+              {{ mov.get_tipo_display }}
+            </span>
+          </td>
+          <td class="tabular-nums"><strong>{{ mov.cantidad }}</strong></td>
+          <td class="tabular-nums card-meta">
+            {% if mov.stock_anterior is None %}Libre{% else %}{{ mov.stock_anterior }}{% endif %}
+            &rarr;
+            <strong>{% if mov.stock_resultante is None %}Libre{% else %}{{ mov.stock_resultante }}{% endif %}</strong>
+          </td>
+          <td class="tabular-nums">
+            {% if mov.pedido_id %}#{{ mov.pedido_id }}{% else %}&mdash;{% endif %}
+          </td>
+          <td class="card-meta">
+            {% if mov.registrado_por %}<strong>{{ mov.registrado_por }}:</strong> {% endif %}
+            {{ mov.motivo|default:"—" }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state" style="padding:24px 12px;">
+    <p style="margin:0;">Aún no se registran movimientos de stock en el turno actual.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

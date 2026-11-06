@@ -11,6 +11,7 @@
     </p>
   </div>
   <div class="header-controls">
+    <a href="{% url 'catalogo:stock_dia' %}" class="btn btn-outline">Gestionar cupos (Stock del Día)</a>
     <a href="{% url 'catalogo:platos_list' %}" class="btn btn-outline">Ver tabla completa</a>
     <a href="{% url 'catalogo:plato_create' %}" class="btn btn-primary">+ Nuevo plato</a>
   </div>
@@ -65,8 +66,13 @@
     <div class="pesca-item">
       <div style="min-width:0;">
         <div class="dish-name">{{ plato.nombre }}</div>
-        <div class="card-meta" style="font-variant-numeric:tabular-nums;">
-          S/ {{ plato.precio|floatformat:2 }}
+        <div class="card-meta" style="font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span>S/ {{ plato.precio|floatformat:2 }}</span>
+          {% if plato.stock_disponible is not None %}
+          <span class="stock-pill {% if plato.stock_disponible == 0 %}stock-pill-zero{% elif plato.stock_bajo %}stock-pill-low{% else %}stock-pill-ok{% endif %}">
+            {{ plato.stock_disponible }} porc.
+          </span>
+          {% endif %}
         </div>
       </div>
 
