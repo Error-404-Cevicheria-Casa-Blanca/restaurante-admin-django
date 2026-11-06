@@ -47,6 +47,56 @@ ALTER TABLE pedido DROP CONSTRAINT IF EXISTS pedido_estado_check;
 ALTER TABLE pedido ADD CONSTRAINT pedido_estado_check
     CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO', 'ANULADO'));
 
+-- 2.2. CAMPOS DE AUDITORÍA, CONCURRENCIA E IDEMPOTENCIA DEL PLAN POS (PRB-49, PRB-53, PRB-54, PRB-69)
+ALTER TABLE usuario ADD COLUMN IF NOT EXISTS pin_hash VARCHAR(255);
+ALTER TABLE pedido ADD COLUMN IF NOT EXISTS client_request_id VARCHAR(64);
+ALTER TABLE pedido ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_pedido_client_request_id'
+    ) THEN
+        ALTER TABLE pedido ADD CONSTRAINT uq_pedido_client_request_id UNIQUE (client_request_id);
+    END IF;
+
+    -- Eliminar duplicados no referenciados de producto antes de crear el índice único
+    DELETE FROM producto p1
+    USING producto p2
+    WHERE p1.nombre = p2.nombre AND p1.id > p2.id
+      AND NOT EXISTS (SELECT 1 FROM detalle_pedido dp WHERE dp.producto_id = p1.id);
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_producto_nombre'
+    ) THEN
+        ALTER TABLE producto ADD CONSTRAINT uq_producto_nombre UNIQUE (nombre);
+    END IF;
+END $$;
+
+-- 2.3. TABLAS DE EVENTOS AUDITABLES Y COLA DE IMPRESIÓN
+CREATE TABLE IF NOT EXISTS evento_pedido (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT NOT NULL REFERENCES pedido(id) ON DELETE CASCADE,
+    estado_anterior VARCHAR(20),
+    estado_nuevo VARCHAR(20) NOT NULL,
+    usuario_id INT REFERENCES usuario(id) ON DELETE SET NULL,
+    motivo VARCHAR(255),
+    fecha TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS impresion_cola (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT REFERENCES pedido(id) ON DELETE CASCADE,
+    tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('COMANDA', 'PRECUENTA')),
+    estacion VARCHAR(30),
+    payload TEXT NOT NULL,
+    estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'IMPRESO', 'FALLIDO')) DEFAULT 'PENDIENTE',
+    intentos INT NOT NULL DEFAULT 0,
+    error TEXT,
+    fecha_creacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_impresion TIMESTAMP WITH TIME ZONE
+);
+
 -- 3. ÍNDICES ESTRATÉGICOS PARA RENDIMIENTO Y CONSULTAS DE COBRO / REPORTES
 CREATE INDEX IF NOT EXISTS idx_fk_pago_pedido ON pago(pedido_id);
 CREATE INDEX IF NOT EXISTS idx_fk_pago_mesa ON pago(mesa_id);
@@ -56,5 +106,8 @@ CREATE INDEX IF NOT EXISTS idx_pago_metodo_fecha ON pago(metodo, fecha_pago);
 CREATE INDEX IF NOT EXISTS idx_sesion_caja_estado ON sesion_caja(estado);
 CREATE INDEX IF NOT EXISTS idx_sesion_caja_cajero ON sesion_caja(cajero_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sesion_caja_unica_abierta ON sesion_caja (estado) WHERE estado = 'ABIERTA';
+CREATE INDEX IF NOT EXISTS idx_pedido_client_request_id ON pedido(client_request_id);
+CREATE INDEX IF NOT EXISTS idx_evento_pedido ON evento_pedido(pedido_id, fecha);
+CREATE INDEX IF NOT EXISTS idx_impresion_pendiente ON impresion_cola(estado, fecha_creacion);
 
 COMMIT;

@@ -9,6 +9,7 @@ CREATE TABLE usuario (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
     clave_hash VARCHAR(255) NOT NULL,
+    pin_hash VARCHAR(255),
     rol_id INT NOT NULL REFERENCES rol(id) ON DELETE RESTRICT
 );
 
@@ -30,7 +31,7 @@ CREATE TABLE categoria (
 
 CREATE TABLE producto (
     id SERIAL PRIMARY KEY,
-    nombre VARCHAR(150) NOT NULL,
+    nombre VARCHAR(150) NOT NULL UNIQUE,
     descripcion TEXT,
     precio NUMERIC(10,2) NOT NULL CHECK (precio > 0),
     disponible BOOLEAN NOT NULL DEFAULT TRUE,
@@ -44,6 +45,8 @@ CREATE TABLE pedido (
     mozo_id INT NOT NULL REFERENCES usuario(id) ON DELETE RESTRICT,
     estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO', 'ANULADO')) DEFAULT 'PENDIENTE',
     total NUMERIC(10,2) NOT NULL DEFAULT 0.00,
+    client_request_id VARCHAR(64) UNIQUE,
+    version INT NOT NULL DEFAULT 1,
     fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -109,4 +112,38 @@ CREATE INDEX idx_pago_metodo_fecha ON pago(metodo, fecha_pago);
 CREATE INDEX idx_sesion_caja_estado ON sesion_caja(estado);
 CREATE INDEX idx_sesion_caja_cajero ON sesion_caja(cajero_id);
 CREATE UNIQUE INDEX uq_sesion_caja_unica_abierta ON sesion_caja (estado) WHERE estado = 'ABIERTA';
+CREATE INDEX idx_pedido_client_request_id ON pedido(client_request_id);
+
+-- =============================================================================
+-- TABLA: evento_pedido (Auditoría inmutable de transiciones y anulaciones - PRB-53)
+-- =============================================================================
+CREATE TABLE evento_pedido (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT NOT NULL REFERENCES pedido(id) ON DELETE CASCADE,
+    estado_anterior VARCHAR(20),
+    estado_nuevo VARCHAR(20) NOT NULL,
+    usuario_id INT REFERENCES usuario(id) ON DELETE SET NULL,
+    motivo VARCHAR(255),
+    fecha TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_evento_pedido ON evento_pedido(pedido_id, fecha);
+
+-- =============================================================================
+-- TABLA: impresion_cola (Cola de trabajos de impresión para tickets y comandas - PRB-69)
+-- =============================================================================
+CREATE TABLE impresion_cola (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT REFERENCES pedido(id) ON DELETE CASCADE,
+    tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('COMANDA', 'PRECUENTA')),
+    estacion VARCHAR(30),
+    payload TEXT NOT NULL,
+    estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'IMPRESO', 'FALLIDO')) DEFAULT 'PENDIENTE',
+    intentos INT NOT NULL DEFAULT 0,
+    error TEXT,
+    fecha_creacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_impresion TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_impresion_pendiente ON impresion_cola(estado, fecha_creacion);
 
