@@ -33,5 +33,6 @@ jobs:
       - name: Run Django tests
         env:
           DJANGO_SETTINGS_MODULE: config.settings
-          USE_SQLITE_FOR_TESTS: "1"
+          DJANGO_DEBUG: "1"
+          DJANGO_SECRET_KEY: "ci-secret-key-temporary-testing-only-12345"
         run: python manage.py test
