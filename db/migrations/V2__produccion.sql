@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS sesion_caja (
 CREATE TABLE IF NOT EXISTS pago (
     id SERIAL PRIMARY KEY,
     pedido_id INT NOT NULL REFERENCES pedido(id) ON DELETE RESTRICT,
-    mesa_id INT NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
+    mesa_id INT REFERENCES mesa(id) ON DELETE RESTRICT,
     mozo_id INT REFERENCES usuario(id) ON DELETE SET NULL,
     sesion_caja_id INT REFERENCES sesion_caja(id) ON DELETE SET NULL,
     metodo VARCHAR(20) NOT NULL CHECK (metodo IN ('EFECTIVO', 'YAPE', 'PLIN', 'TARJETA')),
@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS pago (
     fecha_pago TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 2.1. ALINEACIÓN CON BACKEND v2.0.0-prod (PRB-53 Anulación y PRB-79 Para llevar sin mesa)
+ALTER TABLE pedido ALTER COLUMN mesa_id DROP NOT NULL;
+ALTER TABLE pago ALTER COLUMN mesa_id DROP NOT NULL;
+
+ALTER TABLE pedido DROP CONSTRAINT IF EXISTS pedido_estado_check;
+ALTER TABLE pedido ADD CONSTRAINT pedido_estado_check
+    CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO', 'ANULADO'));
+
 -- 3. ÍNDICES ESTRATÉGICOS PARA RENDIMIENTO Y CONSULTAS DE COBRO / REPORTES
 CREATE INDEX IF NOT EXISTS idx_fk_pago_pedido ON pago(pedido_id);
 CREATE INDEX IF NOT EXISTS idx_fk_pago_mesa ON pago(mesa_id);
@@ -47,5 +55,6 @@ CREATE INDEX IF NOT EXISTS idx_fk_pago_mozo ON pago(mozo_id);
 CREATE INDEX IF NOT EXISTS idx_pago_metodo_fecha ON pago(metodo, fecha_pago);
 CREATE INDEX IF NOT EXISTS idx_sesion_caja_estado ON sesion_caja(estado);
 CREATE INDEX IF NOT EXISTS idx_sesion_caja_cajero ON sesion_caja(cajero_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sesion_caja_unica_abierta ON sesion_caja (estado) WHERE estado = 'ABIERTA';
 
 COMMIT;

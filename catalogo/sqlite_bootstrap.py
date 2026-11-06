@@ -182,7 +182,7 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
         cur.execute("""
             CREATE TABLE IF NOT EXISTS pedido (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mesa_id INTEGER NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
+                mesa_id INTEGER REFERENCES mesa(id) ON DELETE RESTRICT,
                 mozo_id INTEGER NOT NULL,
                 fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
@@ -206,10 +206,14 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
             );
             """)
         cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_sesion_caja_unica_abierta
+            ON sesion_caja (estado) WHERE estado = 'ABIERTA';
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS pago (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 pedido_id INTEGER NOT NULL REFERENCES pedido(id) ON DELETE RESTRICT,
-                mesa_id INTEGER NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
+                mesa_id INTEGER REFERENCES mesa(id) ON DELETE RESTRICT,
                 mozo_id INTEGER,
                 sesion_caja_id INTEGER REFERENCES sesion_caja(id) ON DELETE SET NULL,
                 metodo VARCHAR(20) NOT NULL,

@@ -93,14 +93,18 @@ class Mesa(models.Model):
 
     ESTADO_LIBRE = "LIBRE"
     ESTADO_ATENDIENDO = "ATENDIENDO"
+    ESTADO_ATENDIDA = "ATENDIDA"
     ESTADO_OCUPADA = "OCUPADA"
     ESTADO_PIDE_CUENTA = "PIDE_CUENTA"
+    ESTADO_CUENTA_SOLICITADA = "CUENTA_SOLICITADA"
 
     ESTADOS_CHOICES = [
         (ESTADO_LIBRE, "Libre"),
         (ESTADO_ATENDIENDO, "Atendiendo"),
+        (ESTADO_ATENDIDA, "Atendida"),
         (ESTADO_OCUPADA, "Ocupada"),
         (ESTADO_PIDE_CUENTA, "Pide Cuenta"),
+        (ESTADO_CUENTA_SOLICITADA, "Cuenta Solicitada"),
     ]
 
     numero = models.IntegerField(unique=True, verbose_name="Número de Mesa")
@@ -144,6 +148,7 @@ class Pedido(models.Model):
     ESTADO_LISTO = "LISTO"
     ESTADO_SERVIDO = "SERVIDO"
     ESTADO_COBRADO = "COBRADO"
+    ESTADO_ANULADO = "ANULADO"
     ESTADO_CANCELADO = "CANCELADO"
 
     ESTADOS_CHOICES = [
@@ -152,12 +157,15 @@ class Pedido(models.Model):
         (ESTADO_LISTO, "Listo"),
         (ESTADO_SERVIDO, "Servido"),
         (ESTADO_COBRADO, "Cobrado"),
+        (ESTADO_ANULADO, "Anulado"),
         (ESTADO_CANCELADO, "Cancelado"),
     ]
 
     mesa = models.ForeignKey(
         Mesa,
         on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
         db_column="mesa_id",
         related_name="pedidos",
         verbose_name="Mesa",
@@ -188,7 +196,8 @@ class Pedido(models.Model):
         ordering = ["-fecha_creacion"]
 
     def __str__(self):
-        return f"Pedido #{self.id} (Mesa {self.mesa.numero}) - S/ {self.total}"
+        origen = f"Mesa {self.mesa.numero}" if self.mesa else "Para llevar"
+        return f"Pedido #{self.id} ({origen}) - S/ {self.total}"
 
 
 class SesionCaja(models.Model):
@@ -306,6 +315,8 @@ class Pago(models.Model):
     mesa = models.ForeignKey(
         Mesa,
         on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
         db_column="mesa_id",
         related_name="pagos",
         verbose_name="Mesa",
@@ -362,4 +373,5 @@ class Pago(models.Model):
         ordering = ["-fecha_pago"]
 
     def __str__(self):
-        return f"Pago #{self.id} ({self.metodo}) - S/ {self.monto} (Mesa {self.mesa.numero})"
+        origen = f"Mesa {self.mesa.numero}" if self.mesa else "Para llevar"
+        return f"Pago #{self.id} ({self.metodo}) - S/ {self.monto} ({origen})"

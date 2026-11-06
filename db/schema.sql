@@ -40,9 +40,9 @@ CREATE TABLE producto (
 
 CREATE TABLE pedido (
     id SERIAL PRIMARY KEY,
-    mesa_id INT NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
+    mesa_id INT REFERENCES mesa(id) ON DELETE RESTRICT,
     mozo_id INT NOT NULL REFERENCES usuario(id) ON DELETE RESTRICT,
-    estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO')) DEFAULT 'PENDIENTE',
+    estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'COCINANDO', 'LISTO', 'SERVIDO', 'COBRADO', 'ANULADO')) DEFAULT 'PENDIENTE',
     total NUMERIC(10,2) NOT NULL DEFAULT 0.00,
     fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -90,7 +90,7 @@ CREATE TABLE sesion_caja (
 CREATE TABLE pago (
     id SERIAL PRIMARY KEY,
     pedido_id INT NOT NULL REFERENCES pedido(id) ON DELETE RESTRICT,
-    mesa_id INT NOT NULL REFERENCES mesa(id) ON DELETE RESTRICT,
+    mesa_id INT REFERENCES mesa(id) ON DELETE RESTRICT,
     mozo_id INT REFERENCES usuario(id) ON DELETE SET NULL,
     sesion_caja_id INT REFERENCES sesion_caja(id) ON DELETE SET NULL,
     metodo VARCHAR(20) NOT NULL CHECK (metodo IN ('EFECTIVO', 'YAPE', 'PLIN', 'TARJETA')),
@@ -108,4 +108,5 @@ CREATE INDEX idx_fk_pago_mozo ON pago(mozo_id);
 CREATE INDEX idx_pago_metodo_fecha ON pago(metodo, fecha_pago);
 CREATE INDEX idx_sesion_caja_estado ON sesion_caja(estado);
 CREATE INDEX idx_sesion_caja_cajero ON sesion_caja(cajero_id);
+CREATE UNIQUE INDEX uq_sesion_caja_unica_abierta ON sesion_caja (estado) WHERE estado = 'ABIERTA';
 
