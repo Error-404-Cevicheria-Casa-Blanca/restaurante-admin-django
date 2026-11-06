@@ -1,6 +1,11 @@
 from decimal import Decimal
+import re
+
+import bcrypt
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 
 class Categoria(models.Model):
@@ -560,3 +565,148 @@ class MovimientoStock(models.Model):
             else f"{self.stock_resultante} porc."
         )
         return f"[{self.tipo}] {self.producto.nombre}: {self.cantidad} -> {res}"
+
+
+class Rol(models.Model):
+    """Rol operativo del personal en la tabla compartida 'rol' (PRB-52 / D7).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'rol' es gestionada
+    exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    ROL_ADMIN = "ADMIN"
+    ROL_MOZO = "MOZO"
+    ROL_COCINERO = "COCINERO"
+    ROL_CAJERO = "CAJERO"
+
+    ROLES_CANONICOS = (ROL_ADMIN, ROL_MOZO, ROL_COCINERO, ROL_CAJERO)
+
+    nombre = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Nombre del Rol",
+    )
+
+    class Meta:
+        db_table = "rol"
+        managed = False
+        verbose_name = "Rol Operativo"
+        verbose_name_plural = "Roles Operativos"
+        ordering = ["id"]
+
+    def __str__(self):
+        return self.nombre
+
+
+class Usuario(models.Model):
+    """Usuario operativo del POS compartido con Spring Boot (PRB-52 / D7 / D8).
+
+    Regla D7: tabla 'usuario' administrada por db/schema.sql (managed = False).
+    Regla D8: tanto 'clave_hash' como 'pin_hash' almacenan únicamente hashes
+    BCrypt cost 10 ($2b$10$...), compatibles con BCryptPasswordEncoder de Java.
+    """
+
+    PATRON_PIN = re.compile(r"^\d{4}$")
+
+    username = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Usuario operativo",
+    )
+    clave_hash = models.CharField(
+        max_length=255,
+        verbose_name="Hash BCrypt de contraseña",
+    )
+    pin_hash = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Hash BCrypt de PIN (4 dígitos)",
+    )
+    intentos_fallidos = models.IntegerField(
+        default=0,
+        verbose_name="Intentos fallidos",
+    )
+    bloqueado_hasta = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Bloqueado hasta",
+    )
+    rol = models.ForeignKey(
+        Rol,
+        on_delete=models.RESTRICT,
+        db_column="rol_id",
+        related_name="usuarios",
+        verbose_name="Rol",
+    )
+
+    class Meta:
+        db_table = "usuario"
+        managed = False
+        verbose_name = "Usuario Operativo POS"
+        verbose_name_plural = "Usuarios Operativos POS"
+        ordering = ["rol_id", "username"]
+
+    @property
+    def tiene_pin(self):
+        """Indica si la cuenta tiene un PIN BCrypt registrado."""
+        return bool(self.pin_hash and self.pin_hash.startswith(("$2b$", "$2a$")))
+
+    @property
+    def esta_bloqueado(self):
+        """Indica si el usuario se encuentra temporalmente bloqueado."""
+        if not self.bloqueado_hasta:
+            return False
+        ahora = timezone.now()
+        hasta = self.bloqueado_hasta
+        if timezone.is_naive(hasta):
+            hasta = timezone.make_aware(hasta, timezone.get_current_timezone())
+        return hasta > ahora
+
+    def set_password_bcrypt(self, raw_password):
+        """Genera hash BCrypt cost 10 cumpliendo estrictamente la Regla D8."""
+        if not raw_password or len(raw_password.strip()) < 8:
+            raise ValidationError(
+                "La contraseña operativa debe tener al menos 8 caracteres."
+            )
+        if raw_password.strip() == "password123":
+            raise ValidationError(
+                "No se permite la contraseña débil de demostración 'password123'."
+            )
+        self.clave_hash = bcrypt.hashpw(
+            raw_password.encode("utf-8"),
+            bcrypt.gensalt(rounds=10),
+        ).decode("utf-8")
+
+    def check_password_bcrypt(self, raw_password):
+        """Verifica una contraseña en texto plano contra el hash BCrypt."""
+        if not raw_password or not self.clave_hash:
+            return False
+        return bcrypt.checkpw(
+            raw_password.encode("utf-8"),
+            self.clave_hash.encode("utf-8"),
+        )
+
+    def set_pin_bcrypt(self, raw_pin):
+        """Valida PIN numérico de 4 dígitos y almacena su hash BCrypt cost 10."""
+        pin_limpio = (raw_pin or "").strip()
+        if not self.PATRON_PIN.match(pin_limpio):
+            raise ValidationError(
+                "El PIN operativo debe contener exactamente 4 dígitos numéricos."
+            )
+        self.pin_hash = bcrypt.hashpw(
+            pin_limpio.encode("utf-8"),
+            bcrypt.gensalt(rounds=10),
+        ).decode("utf-8")
+
+    def check_pin_bcrypt(self, raw_pin):
+        """Verifica un PIN de 4 dígitos contra pin_hash."""
+        if not raw_pin or not self.pin_hash:
+            return False
+        return bcrypt.checkpw(
+            raw_pin.strip().encode("utf-8"),
+            self.pin_hash.encode("utf-8"),
+        )
+
+    def __str__(self):
+        return f"{self.username} ({self.rol.nombre})"

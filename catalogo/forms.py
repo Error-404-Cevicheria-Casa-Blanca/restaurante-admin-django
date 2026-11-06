@@ -5,7 +5,7 @@ from decimal import Decimal
 from django import forms
 from django.core.exceptions import ValidationError
 
-from .models import Categoria, Producto
+from .models import Categoria, Producto, Rol, Usuario
 
 
 class CategoriaForm(forms.ModelForm):
@@ -260,3 +260,79 @@ class CierreCajaForm(forms.Form):
                     "antes de cerrar la caja.",
                 )
         return cleaned
+
+
+class UsuarioOperativoForm(forms.Form):
+    """Alta de personal operativo POS con BCrypt cost 10 en clave y PIN (PRB-52 / D8)."""
+
+    username = forms.CharField(
+        max_length=50,
+        label="Usuario operativo",
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-input",
+                "placeholder": "Ej. mozo_03",
+                "autocomplete": "off",
+            }
+        ),
+    )
+    rol = forms.ModelChoiceField(
+        queryset=Rol.objects.all().order_by("id"),
+        label="Rol en el POS",
+        empty_label="Selecciona un rol...",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    password = forms.CharField(
+        min_length=8,
+        max_length=128,
+        label="Contraseña operativa (mín. 8 caracteres)",
+        widget=forms.PasswordInput(
+            attrs={
+                "class": "form-input",
+                "placeholder": "Contraseña segura para login completo",
+                "autocomplete": "new-password",
+            }
+        ),
+    )
+    pin = forms.CharField(
+        min_length=4,
+        max_length=4,
+        label="PIN rápido (4 dígitos)",
+        widget=forms.PasswordInput(
+            attrs={
+                "class": "form-input",
+                "placeholder": "Ej. 3045",
+                "inputmode": "numeric",
+                "maxlength": "4",
+                "autocomplete": "new-password",
+            }
+        ),
+    )
+
+    def clean_username(self):
+        username = (self.cleaned_data.get("username") or "").strip()
+        if len(username) < 3:
+            raise ValidationError("El usuario debe tener al menos 3 caracteres.")
+        if " " in username:
+            raise ValidationError("El nombre de usuario no puede contener espacios.")
+        if Usuario.objects.filter(username__iexact=username).exists():
+            raise ValidationError("Ya existe un usuario operativo con ese nombre.")
+        return username
+
+    def clean_password(self):
+        pwd = self.cleaned_data.get("password") or ""
+        if len(pwd.strip()) < 8:
+            raise ValidationError("La contraseña debe tener al menos 8 caracteres.")
+        if pwd.strip() == "password123":
+            raise ValidationError(
+                "No se permite la contraseña débil de demostración 'password123'."
+            )
+        return pwd
+
+    def clean_pin(self):
+        pin = (self.cleaned_data.get("pin") or "").strip()
+        if not Usuario.PATRON_PIN.match(pin):
+            raise ValidationError(
+                "El PIN debe contener exactamente 4 dígitos numéricos."
+            )
+        return pin

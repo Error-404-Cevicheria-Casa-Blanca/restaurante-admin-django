@@ -10,8 +10,10 @@ from django.conf import settings
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
 from catalogo.models import (
@@ -22,8 +24,11 @@ from catalogo.models import (
     Pago,
     Pedido,
     Producto,
+    Rol,
     SesionCaja,
+    Usuario,
 )
+from catalogo.produccion_seeds import HASH_DEBIL_DEMO, auditar_datos_produccion
 from catalogo.stock_service import (
     StockInsuficienteError,
     ajustar_stock_producto,
@@ -165,6 +170,10 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(DetallePedido)
         if MovimientoStock._meta.db_table not in existentes:
             editor.create_model(MovimientoStock)
+        if Rol._meta.db_table not in existentes:
+            editor.create_model(Rol)
+        if Usuario._meta.db_table not in existentes:
+            editor.create_model(Usuario)
 
 
 class CatalogoModelTests(TestCase):
@@ -1332,3 +1341,157 @@ class StockDelDiaTests(TestCase):
 
         with self.assertRaises(ValidationError):
             ajustar_stock_producto(self.tiradito.id, delta=-10)
+
+
+class DatosRealesProduccionTests(TestCase):
+    """Pruebas integrales de seeds reales, usuarios/PIN BCrypt y panel /personal/ (PRB-52)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="gerente_prod",
+            password="ClaveSegura!2026",
+            is_staff=True,
+        )
+        self.normal_user = User.objects.create_user(
+            username="externo",
+            password="ClaveSegura!2026",
+            is_staff=False,
+        )
+
+    def test_modelos_rol_y_usuario_son_unmanaged_y_validan_bcrypt_d8(self):
+        """PRB-52 / D7 / D8: Rol y Usuario tienen managed=False y hashes BCrypt cost 10."""
+        self.assertFalse(Rol._meta.managed)
+        self.assertFalse(Usuario._meta.managed)
+
+        rol_mozo = Rol.objects.create(nombre="MOZO")
+        mozo = Usuario(username="mozo_turno", rol=rol_mozo)
+
+        with self.assertRaises(ValidationError):
+            mozo.set_password_bcrypt("password123")
+        with self.assertRaises(ValidationError):
+            mozo.set_password_bcrypt("corta")
+        with self.assertRaises(ValidationError):
+            mozo.set_pin_bcrypt("12ab")
+
+        mozo.set_password_bcrypt("MarinaSegura#2026")
+        mozo.set_pin_bcrypt("4815")
+        mozo.save()
+
+        self.assertTrue(mozo.clave_hash.startswith("$2b$10$"))
+        self.assertTrue(mozo.pin_hash.startswith("$2b$10$"))
+        self.assertTrue(mozo.tiene_pin)
+        self.assertTrue(mozo.check_password_bcrypt("MarinaSegura#2026"))
+        self.assertFalse(mozo.check_password_bcrypt("incorrecta"))
+        self.assertTrue(mozo.check_pin_bcrypt("4815"))
+        self.assertFalse(mozo.check_pin_bcrypt("0000"))
+
+    def test_comando_seed_produccion_idempotente_y_fotos_verificadas(self):
+        """PRB-52: seed_produccion puebla carta (15), mesas (13), roles (4) y PINs sin duplicar."""
+        # Simular residuos previos de seed.sql (admin_test con password123 y plato demo)
+        r_admin = Rol.objects.create(nombre="ADMIN")
+        r_mozo = Rol.objects.create(nombre="MOZO")
+        Usuario.objects.create(
+            username="admin_test",
+            clave_hash=HASH_DEBIL_DEMO,
+            rol=r_admin,
+        )
+        Usuario.objects.create(
+            username="mozo_01",
+            clave_hash=HASH_DEBIL_DEMO,
+            pin_hash=None,
+            rol=r_mozo,
+        )
+        cat_vieja = Categoria.objects.create(nombre="Entradas")
+        Producto.objects.create(
+            nombre="Ceviche Clásico",
+            precio=Decimal("48.00"),
+            disponible=True,
+            categoria=cat_vieja,
+        )
+
+        # Ejecutar 2 veces seguidas para verificar idempotencia total
+        call_command("seed_produccion")
+        call_command("seed_produccion")
+        call_command("seed_produccion", "--solo-auditar")
+
+        auditoria = auditar_datos_produccion()
+        self.assertTrue(auditoria["ok"], auditoria["errores"])
+        self.assertEqual(auditoria["roles_total"], 4)
+        self.assertEqual(auditoria["platos_oficiales"], 15)
+        self.assertEqual(auditoria["mesas_total"], 13)
+        self.assertFalse(Usuario.objects.filter(username="admin_test").exists())
+        self.assertFalse(Usuario.objects.filter(clave_hash=HASH_DEBIL_DEMO).exists())
+        self.assertFalse(Categoria.objects.filter(nombre="Entradas").exists())
+
+        mozo1 = Usuario.objects.get(username="mozo_01")
+        self.assertTrue(mozo1.tiene_pin)
+        self.assertTrue(mozo1.check_pin_bcrypt("3011"))
+
+    def test_personal_requiere_staff_autenticado(self):
+        """PRB-52: /personal/ exige autenticación con permisos de staff."""
+        resp_anon = self.client.get("/personal/")
+        self.assertEqual(resp_anon.status_code, 302)
+        self.assertIn("/login/", resp_anon["Location"])
+
+        self.client.force_login(self.normal_user)
+        resp_no_staff = self.client.get("/personal/")
+        self.assertEqual(resp_no_staff.status_code, 302)
+
+    def test_panel_personal_alta_rotacion_pin_y_desbloqueo(self):
+        """PRB-52 / PRB-12: Permite crear usuario POS, rotar PIN/clave y desbloquear cuenta."""
+        self.client.force_login(self.staff_user)
+
+        resp_get = self.client.get("/personal/")
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertEqual(Rol.objects.count(), 4)
+
+        rol_cajero = Rol.objects.get(nombre="CAJERO")
+        resp_crear = self.client.post(
+            "/personal/nuevo/",
+            {
+                "username": "cajero_noche",
+                "rol": str(rol_cajero.id),
+                "password": "TurnoNoche!2026",
+                "pin": "7788",
+            },
+        )
+        self.assertEqual(resp_crear.status_code, 302)
+        cajero = Usuario.objects.get(username="cajero_noche")
+        self.assertTrue(cajero.check_password_bcrypt("TurnoNoche!2026"))
+        self.assertTrue(cajero.check_pin_bcrypt("7788"))
+
+        # Simular bloqueo por intentos fallidos en el POS y desbloquear desde Django
+        cajero.intentos_fallidos = 5
+        cajero.bloqueado_hasta = timezone.now() + timezone.timedelta(minutes=15)
+        cajero.save(update_fields=["intentos_fallidos", "bloqueado_hasta"])
+        self.assertTrue(cajero.esta_bloqueado)
+
+        resp_unlock = self.client.post(f"/personal/{cajero.id}/desbloquear/")
+        self.assertEqual(resp_unlock.status_code, 302)
+        cajero.refresh_from_db()
+        self.assertFalse(cajero.esta_bloqueado)
+        self.assertEqual(cajero.intentos_fallidos, 0)
+
+        # Rotar PIN a 9922 desde el formulario inline
+        resp_upd = self.client.post(
+            f"/personal/{cajero.id}/credenciales/",
+            {
+                "rol_id": str(rol_cajero.id),
+                "nueva_clave": "",
+                "nuevo_pin": "9922",
+            },
+        )
+        self.assertEqual(resp_upd.status_code, 302)
+        cajero.refresh_from_db()
+        self.assertTrue(cajero.check_pin_bcrypt("9922"))
+
+        # Sincronizar seeds reales desde botón web
+        resp_sync = self.client.post("/personal/sincronizar-produccion/")
+        self.assertEqual(resp_sync.status_code, 302)
+        self.assertTrue(auditar_datos_produccion()["ok"])

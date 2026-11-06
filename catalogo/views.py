@@ -16,7 +16,13 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from .forms import AperturaCajaForm, CategoriaForm, CierreCajaForm, ProductoForm
+from .forms import (
+    AperturaCajaForm,
+    CategoriaForm,
+    CierreCajaForm,
+    ProductoForm,
+    UsuarioOperativoForm,
+)
 from .models import (
     Categoria,
     Mesa,
@@ -24,7 +30,14 @@ from .models import (
     Pago,
     Pedido,
     Producto,
+    Rol,
     SesionCaja,
+    Usuario,
+)
+from .produccion_seeds import (
+    ROLES_OFICIALES,
+    auditar_datos_produccion,
+    cargar_datos_produccion,
 )
 from .sqlite_bootstrap import asegurar_tablas_sqlite, poblar_carta_ejemplo
 from .stock_service import (
@@ -1680,3 +1693,132 @@ def carga_masiva_stock(request):
         f"fijados en {cupo} porción(es).",
     )
     return redirect("catalogo:stock_dia")
+
+
+def _asegurar_roles_canonicos():
+    """Garantiza que existan los 4 roles oficiales para el formulario de personal."""
+    asegurar_tablas_sqlite()
+    if Rol.objects.count() < len(ROLES_OFICIALES):
+        for nombre_rol in ROLES_OFICIALES:
+            Rol.objects.get_or_create(nombre=nombre_rol)
+
+
+@staff_required
+def personal_operativo(request):
+    """Gestión de usuarios operativos POS, roles, PIN BCrypt y auditoría PRB-52."""
+    _asegurar_roles_canonicos()
+    usuarios = Usuario.objects.select_related("rol").order_by("rol_id", "username")
+    roles = Rol.objects.order_by("id")
+    auditoria = auditar_datos_produccion()
+
+    context = {
+        "nav_active": "personal",
+        "usuarios": usuarios,
+        "roles": roles,
+        "form_usuario": UsuarioOperativoForm(),
+        "auditoria": auditoria,
+        "total_usuarios": usuarios.count(),
+        "total_con_pin": sum(1 for u in usuarios if u.tiene_pin),
+        "total_bloqueados": sum(1 for u in usuarios if u.esta_bloqueado),
+    }
+    return render(request, "catalogo/personal.html", context)
+
+
+@staff_required
+@require_POST
+def crear_usuario_operativo(request):
+    """Alta de cuenta operativa POS con clave_hash y pin_hash en BCrypt cost 10."""
+    _asegurar_roles_canonicos()
+    form = UsuarioOperativoForm(request.POST)
+    if not form.is_valid():
+        for _, errs in form.errors.items():
+            for err in errs:
+                messages.error(request, err)
+        return redirect("catalogo:personal")
+
+    nuevo = Usuario(
+        username=form.cleaned_data["username"],
+        rol=form.cleaned_data["rol"],
+        intentos_fallidos=0,
+        bloqueado_hasta=None,
+    )
+    nuevo.set_password_bcrypt(form.cleaned_data["password"])
+    nuevo.set_pin_bcrypt(form.cleaned_data["pin"])
+    nuevo.save()
+    messages.success(
+        request,
+        f"Usuario operativo '{nuevo.username}' ({nuevo.rol.nombre}) registrado "
+        "con contraseña y PIN BCrypt cost 10.",
+    )
+    return redirect("catalogo:personal")
+
+
+@staff_required
+@require_POST
+def actualizar_credenciales_operativas(request, pk):
+    """Actualiza rol, contraseña BCrypt y/o PIN de 4 dígitos de un usuario POS."""
+    _asegurar_roles_canonicos()
+    usuario = get_object_or_404(Usuario, pk=pk)
+
+    rol_id = (request.POST.get("rol_id") or "").strip()
+    nueva_clave = request.POST.get("nueva_clave") or ""
+    nuevo_pin = (request.POST.get("nuevo_pin") or "").strip()
+
+    campos = []
+    try:
+        if rol_id.isdigit():
+            nuevo_rol = get_object_or_404(Rol, pk=int(rol_id))
+            if usuario.rol_id != nuevo_rol.id:
+                usuario.rol = nuevo_rol
+                campos.append("rol")
+        if nueva_clave.strip():
+            usuario.set_password_bcrypt(nueva_clave)
+            campos.append("clave_hash")
+        if nuevo_pin:
+            usuario.set_pin_bcrypt(nuevo_pin)
+            campos.append("pin_hash")
+    except ValidationError as exc:
+        messages.error(request, exc.messages[0])
+        return redirect("catalogo:personal")
+
+    if not campos:
+        messages.info(request, f"Sin cambios pendientes para '{usuario.username}'.")
+        return redirect("catalogo:personal")
+
+    usuario.intentos_fallidos = 0
+    usuario.bloqueado_hasta = None
+    campos.extend(["intentos_fallidos", "bloqueado_hasta"])
+    usuario.save(update_fields=campos)
+    messages.success(
+        request,
+        f"Credenciales BCrypt actualizadas para '{usuario.username}'.",
+    )
+    return redirect("catalogo:personal")
+
+
+@staff_required
+@require_POST
+def desbloquear_usuario_operativo(request, pk):
+    """Restablece intentos fallidos y desbloquea temporalmente una cuenta POS."""
+    asegurar_tablas_sqlite()
+    usuario = get_object_or_404(Usuario, pk=pk)
+    usuario.intentos_fallidos = 0
+    usuario.bloqueado_hasta = None
+    usuario.save(update_fields=["intentos_fallidos", "bloqueado_hasta"])
+    messages.success(request, f"Cuenta operativa '{usuario.username}' desbloqueada.")
+    return redirect("catalogo:personal")
+
+
+@staff_required
+@require_POST
+def sincronizar_seeds_produccion_view(request):
+    """Ejecuta de forma idempotente la migración de datos reales PRB-52."""
+    res = cargar_datos_produccion()
+    messages.success(
+        request,
+        f"Datos reales sincronizados (PRB-52): usuarios +{res['usuarios_creados']}/"
+        f"~{res['usuarios_actualizados']}, platos +{res['platos_creados']}/"
+        f"~{res['platos_actualizados']}, mesas +{res['mesas_creadas']}/"
+        f"~{res['mesas_actualizadas']}.",
+    )
+    return redirect("catalogo:personal")

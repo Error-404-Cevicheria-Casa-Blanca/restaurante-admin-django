@@ -294,6 +294,23 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rol (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre VARCHAR(50) NOT NULL UNIQUE
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS usuario (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username VARCHAR(50) NOT NULL UNIQUE,
+                clave_hash VARCHAR(255) NOT NULL,
+                pin_hash VARCHAR(255),
+                intentos_fallidos INTEGER NOT NULL DEFAULT 0,
+                bloqueado_hasta TIMESTAMP,
+                rol_id INTEGER NOT NULL REFERENCES rol(id) ON DELETE RESTRICT
+            );
+            """)
     _TABLAS_ASEGURADAS.add(using)
 
 

@@ -1,0 +1,185 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Personal Operativo y PIN{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Personal Operativo, Roles y PIN POS</h1>
+    <p class="page-subtitle">
+      Gestión de credenciales BCrypt cost 10, PIN rápido de 4 dígitos y estado de datos reales de producción (PRB-52 · Reglas D7/D8).
+    </p>
+  </div>
+  <div class="page-actions">
+    <form method="post" action="{% url 'catalogo:personal_sync_seeds' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary">
+        Sincronizar Datos Reales (PRB-52)
+      </button>
+    </form>
+  </div>
+</header>
+
+<!-- KPIs de Personal y Datos de Producción -->
+<section class="kpi-grid" style="margin-bottom:20px;">
+  <article class="kpi-card">
+    <div class="kpi-label">Personal POS Registrado</div>
+    <div class="kpi-value">{{ total_usuarios }}</div>
+    <div class="kpi-foot">{{ total_con_pin }} con PIN de 4 dígitos activo</div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">Carta Marina Oficial</div>
+    <div class="kpi-value">{{ auditoria.platos_oficiales }} / 15</div>
+    <div class="kpi-foot">Precios e imágenes locales verificadas</div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">Mesas Configuradas</div>
+    <div class="kpi-value">{{ auditoria.mesas_total }} / 13</div>
+    <div class="kpi-foot">Piso 1 (1–7) y Piso 2 (8–13)</div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-label">Estado Auditoría Producción</div>
+    <div class="kpi-value">
+      {% if auditoria.ok %}
+      <span class="badge badge-success">100% Verificado</span>
+      {% else %}
+      <span class="badge badge-warning">Pendiente de Sincronizar</span>
+      {% endif %}
+    </div>
+    <div class="kpi-foot">
+      {% if total_bloqueados > 0 %}
+      {{ total_bloqueados }} cuenta(s) bloqueada(s) temporalmente
+      {% else %}
+      Sin cuentas bloqueadas ni claves demo
+      {% endif %}
+    </div>
+  </article>
+</section>
+
+{% if not auditoria.ok %}
+<section class="card" style="margin-bottom:20px;border-left:4px solid #d97706;">
+  <h2 class="card-title" style="margin-bottom:8px;">Observaciones detectadas en la auditoría de producción</h2>
+  <ul style="margin:0;padding-left:20px;color:#92400e;font-size:0.92rem;">
+    {% for err in auditoria.errores %}
+    <li>{{ err }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<div style="display:grid;grid-template-columns:minmax(290px, 360px) 1fr;gap:20px;align-items:start;">
+  <!-- Alta de nuevo usuario POS -->
+  <section class="card">
+    <h2 class="card-title" style="margin-bottom:6px;">Registrar Personal POS</h2>
+    <p class="card-meta" style="margin-bottom:16px;">
+      Almacena contraseña y PIN en formato <code>$2b$10$...</code> compatible con Spring Security.
+    </p>
+    <form method="post" action="{% url 'catalogo:personal_create' %}">
+      {% csrf_token %}
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" for="{{ form_usuario.username.id_for_label }}">{{ form_usuario.username.label }}</label>
+        {{ form_usuario.username }}
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" for="{{ form_usuario.rol.id_for_label }}">{{ form_usuario.rol.label }}</label>
+        {{ form_usuario.rol }}
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label" for="{{ form_usuario.password.id_for_label }}">{{ form_usuario.password.label }}</label>
+        {{ form_usuario.password }}
+      </div>
+      <div class="form-group" style="margin-bottom:16px;">
+        <label class="form-label" for="{{ form_usuario.pin.id_for_label }}">{{ form_usuario.pin.label }}</label>
+        {{ form_usuario.pin }}
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Registrar con PIN BCrypt</button>
+    </form>
+  </section>
+
+  <!-- Listado y rotación de credenciales / PIN -->
+  <section class="card">
+    <h2 class="card-title" style="margin-bottom:14px;">Cuentas Operativas del Restaurante</h2>
+    {% if usuarios %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Usuario</th>
+            <th>Estado PIN / Seguridad</th>
+            <th>Actualizar Rol, Clave o PIN (4 dígitos)</th>
+            <th style="text-align:right;">Bloqueo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in usuarios %}
+          <tr>
+            <td>
+              <div class="dish-name">{{ u.username }}</div>
+              <span class="cat-chip">{{ u.rol.nombre }}</span>
+            </td>
+            <td>
+              {% if u.tiene_pin %}
+              <span class="badge badge-success">PIN Activo (BCrypt)</span>
+              {% else %}
+              <span class="badge badge-warning">Sin PIN</span>
+              {% endif %}
+              {% if u.esta_bloqueado %}
+              <div style="margin-top:4px;">
+                <span class="badge badge-danger">Bloqueado ({{ u.intentos_fallidos }} int.)</span>
+              </div>
+              {% elif u.intentos_fallidos > 0 %}
+              <div class="dish-desc" style="margin-top:4px;">{{ u.intentos_fallidos }} intento(s) fallido(s)</div>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post"
+                    action="{% url 'catalogo:personal_update_credentials' u.id %}"
+                    style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                {% csrf_token %}
+                <select name="rol_id" class="form-select" style="width:auto;min-width:120px;padding:6px 8px;" aria-label="Rol de {{ u.username }}">
+                  {% for r in roles %}
+                  <option value="{{ r.id }}" {% if r.id == u.rol_id %}selected{% endif %}>{{ r.nombre }}</option>
+                  {% endfor %}
+                </select>
+                <input type="password"
+                       name="nueva_clave"
+                       class="form-input"
+                       style="width:155px;padding:6px 8px;"
+                       minlength="8"
+                       placeholder="Nueva clave (opc.)"
+                       aria-label="Nueva clave de {{ u.username }}">
+                <input type="password"
+                       name="nuevo_pin"
+                       class="form-input"
+                       style="width:110px;padding:6px 8px;"
+                       inputmode="numeric"
+                       maxlength="4"
+                       placeholder="PIN 4 díg."
+                       aria-label="Nuevo PIN de {{ u.username }}">
+                <button type="submit" class="btn btn-sm btn-outline">Guardar</button>
+              </form>
+            </td>
+            <td style="text-align:right;">
+              {% if u.esta_bloqueado or u.intentos_fallidos > 0 %}
+              <form method="post" action="{% url 'catalogo:personal_unlock' u.id %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-success-soft">Desbloquear</button>
+              </form>
+              {% else %}
+              <span class="card-meta">Operativo</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="card-meta">Aún no hay cuentas operativas registradas. Usa «Sincronizar Datos Reales (PRB-52)» para poblar el personal base.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

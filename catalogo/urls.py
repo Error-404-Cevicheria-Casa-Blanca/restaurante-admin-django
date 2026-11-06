@@ -75,4 +75,22 @@ urlpatterns = [
         views.carga_masiva_stock,
         name="stock_carga_masiva",
     ),
+    # Personal operativo, roles, PIN BCrypt y datos reales (PRB-52 / PRB-12)
+    path("personal/", views.personal_operativo, name="personal"),
+    path("personal/nuevo/", views.crear_usuario_operativo, name="personal_create"),
+    path(
+        "personal/<int:pk>/credenciales/",
+        views.actualizar_credenciales_operativas,
+        name="personal_update_credentials",
+    ),
+    path(
+        "personal/<int:pk>/desbloquear/",
+        views.desbloquear_usuario_operativo,
+        name="personal_unlock",
+    ),
+    path(
+        "personal/sincronizar-produccion/",
+        views.sincronizar_seeds_produccion_view,
+        name="personal_sync_seeds",
+    ),
 ]

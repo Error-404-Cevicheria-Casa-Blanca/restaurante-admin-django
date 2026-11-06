@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.db.models import Count
 from django.utils.translation import ngettext
 
-from .models import Categoria, MovimientoStock, Pago, Producto, SesionCaja
+from .models import Categoria, MovimientoStock, Pago, Producto, Rol, SesionCaja, Usuario
 
 
 @admin.register(Categoria)
@@ -192,3 +192,28 @@ class MovimientoStockAdmin(admin.ModelAdmin):
     list_filter = ("tipo",)
     search_fields = ("producto__nombre", "motivo", "registrado_por")
     ordering = ("-fecha", "-id")
+
+
+@admin.register(Rol)
+class RolAdmin(admin.ModelAdmin):
+    """Consulta de roles operativos del POS (PRB-52)."""
+
+    list_display = ("id", "nombre")
+    ordering = ("id",)
+
+
+@admin.register(Usuario)
+class UsuarioAdmin(admin.ModelAdmin):
+    """Consulta administrativa de personal operativo y estado de PIN (PRB-52)."""
+
+    list_display = (
+        "id",
+        "username",
+        "rol",
+        "tiene_pin",
+        "intentos_fallidos",
+        "bloqueado_hasta",
+    )
+    list_filter = ("rol",)
+    search_fields = ("username",)
+    ordering = ("rol_id", "username")

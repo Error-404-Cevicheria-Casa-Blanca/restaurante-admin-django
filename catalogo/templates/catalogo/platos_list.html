@@ -133,10 +133,21 @@
                    aria-label="Seleccionar {{ plato.nombre }}">
           </td>
           <td>
-            <div class="dish-name">{{ plato.nombre }}</div>
-            {% if plato.descripcion %}
-            <div class="dish-desc">{{ plato.descripcion }}</div>
-            {% endif %}
+            <div style="display:flex;align-items:center;gap:12px;">
+              {% if plato.imagen_url %}
+              <img src="{{ plato.imagen_url }}"
+                   alt="Foto de {{ plato.nombre }}"
+                   width="44"
+                   height="34"
+                   style="width:44px;height:34px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0;">
+              {% endif %}
+              <div>
+                <div class="dish-name">{{ plato.nombre }}</div>
+                {% if plato.descripcion %}
+                <div class="dish-desc">{{ plato.descripcion }}</div>
+                {% endif %}
+              </div>
+            </div>
           </td>
           <td>
             <span class="cat-chip">{{ plato.categoria.nombre }}</span>
