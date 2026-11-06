@@ -192,7 +192,7 @@
         {% for p in pedidos_activos %}
         <div class="op-pedido-item">
           <div class="op-ped-header">
-            <strong>Comanda #{{ p.id }} · Mesa {{ p.mesa.numero }}</strong>
+            <strong>Comanda #{{ p.id }} · {% if p.mesa %}Mesa {{ p.mesa.numero }}{% else %}Para llevar{% endif %}</strong>
             <span class="status-badge ped-status-{{ p.estado|lower }}">{{ p.get_estado_display }}</span>
           </div>
           <div class="op-ped-meta">

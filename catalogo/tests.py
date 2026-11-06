@@ -14,7 +14,7 @@ from django.db import connection
 from django.test import SimpleTestCase, TestCase
 
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
-from catalogo.models import Categoria, Mesa, Pedido, Producto
+from catalogo.models import Categoria, Mesa, Pago, Pedido, Producto, SesionCaja
 
 RUTA_PROYECTO = str(settings.BASE_DIR)
 
@@ -139,6 +139,10 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(Mesa)
         if Pedido._meta.db_table not in existentes:
             editor.create_model(Pedido)
+        if SesionCaja._meta.db_table not in existentes:
+            editor.create_model(SesionCaja)
+        if Pago._meta.db_table not in existentes:
+            editor.create_model(Pago)
 
 
 class CatalogoModelTests(TestCase):
@@ -592,3 +596,354 @@ class DashboardOperativoTests(TestCase):
         resp = self.client.get("/operativo/kpis/")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login/", resp.url)
+
+
+class CajaArqueoTests(TestCase):
+    """Pruebas integrales de apertura, control de turno único y Cierre Z (PRB-60)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="cajero_principal",
+            password="ClaveCaja!2026",
+            is_staff=True,
+        )
+        self.normal_user = User.objects.create_user(
+            username="mozo_sin_panel",
+            password="ClaveCaja!2026",
+            is_staff=False,
+        )
+        self.mesa1 = Mesa.objects.create(
+            numero=1,
+            capacidad=4,
+            ubicacion="Primer piso",
+            estado=Mesa.ESTADO_OCUPADA,
+        )
+
+    def test_caja_requiere_staff_autenticado(self):
+        """Las rutas de caja redirigen al login para anónimos o usuarios sin is_staff."""
+        for ruta in ("/caja/", "/caja/abrir/", "/caja/cerrar/"):
+            resp = self.client.get(ruta)
+            self.assertEqual(resp.status_code, 302)
+            self.assertIn("/login/", resp["Location"])
+
+        self.client.force_login(self.normal_user)
+        resp_no_staff = self.client.get("/caja/")
+        self.assertEqual(resp_no_staff.status_code, 302)
+        self.assertIn("/login/", resp_no_staff["Location"])
+
+    def test_apertura_caja_y_bloqueo_doble_apertura(self):
+        """PRB-60: Permite abrir turno y bloquea estrictamente una segunda caja abierta."""
+        self.client.force_login(self.staff_user)
+
+        resp_abrir = self.client.post(
+            "/caja/abrir/",
+            {
+                "monto_inicial": "150.00",
+                "observaciones": "Fondo inicial verificado",
+            },
+        )
+        self.assertEqual(resp_abrir.status_code, 302)
+        self.assertEqual(
+            SesionCaja.objects.filter(estado=SesionCaja.ESTADO_ABIERTA).count(),
+            1,
+        )
+        sesion = SesionCaja.objects.get(estado=SesionCaja.ESTADO_ABIERTA)
+        self.assertEqual(sesion.monto_inicial, Decimal("150.00"))
+        self.assertEqual(sesion.monto_esperado, Decimal("150.00"))
+
+        # Intentar abrir una segunda sesión mientras la primera sigue ABIERTA
+        resp_segunda = self.client.post(
+            "/caja/abrir/",
+            {"monto_inicial": "200.00", "observaciones": "Intento duplicado"},
+            follow=True,
+        )
+        self.assertEqual(resp_segunda.status_code, 200)
+        self.assertEqual(
+            SesionCaja.objects.filter(estado=SesionCaja.ESTADO_ABIERTA).count(),
+            1,
+        )
+        self.assertContains(resp_segunda, "Solo puede existir una caja ABIERTA")
+
+    def test_cierre_z_cuadrado_con_pagos_multimedios_y_para_llevar(self):
+        """PRB-60: Calcula monto esperado exacto y ejecuta Cierre Z cuadrado (dif = 0)."""
+        self.client.force_login(self.staff_user)
+        self.client.post("/caja/abrir/", {"monto_inicial": "100.00"})
+        sesion = SesionCaja.objects.get(estado=SesionCaja.ESTADO_ABIERTA)
+
+        ped_salon = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=2,
+            estado=Pedido.ESTADO_COBRADO,
+            total=Decimal("125.00"),
+        )
+        ped_llevar = Pedido.objects.create(
+            mesa=None,
+            mozo_id=2,
+            estado=Pedido.ESTADO_COBRADO,
+            total=Decimal("125.00"),
+        )
+
+        Pago.objects.create(
+            pedido=ped_salon,
+            mesa=self.mesa1,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_EFECTIVO,
+            monto=Decimal("80.00"),
+            propina=Decimal("5.00"),
+            client_request_id="req-efec-001",
+        )
+        Pago.objects.create(
+            pedido=ped_salon,
+            mesa=self.mesa1,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_YAPE,
+            monto=Decimal("45.00"),
+            referencia="YP-991",
+            client_request_id="req-yape-002",
+        )
+        Pago.objects.create(
+            pedido=ped_llevar,
+            mesa=None,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_PLIN,
+            monto=Decimal("30.00"),
+            referencia="PL-442",
+            client_request_id="req-plin-003",
+        )
+        Pago.objects.create(
+            pedido=ped_llevar,
+            mesa=None,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_TARJETA,
+            monto=Decimal("95.00"),
+            propina=Decimal("10.00"),
+            referencia="POS-778",
+            client_request_id="req-tarj-004",
+        )
+
+        resp_vista = self.client.get("/caja/")
+        self.assertEqual(resp_vista.status_code, 200)
+        resumen = resp_vista.context["resumen_actual"]
+        self.assertEqual(resumen["efectivo"], Decimal("80.00"))
+        self.assertEqual(resumen["ventas_digital"], Decimal("170.00"))
+        self.assertEqual(resumen["total_ventas"], Decimal("250.00"))
+        self.assertEqual(resumen["total_propinas"], Decimal("15.00"))
+        self.assertEqual(resumen["monto_esperado"], Decimal("180.00"))
+        self.assertContains(resp_vista, "Para llevar")
+
+        resp_cierre = self.client.post(
+            "/caja/cerrar/",
+            {"monto_real": "180.00", "observaciones": ""},
+        )
+        self.assertEqual(resp_cierre.status_code, 302)
+
+        sesion.refresh_from_db()
+        self.assertEqual(sesion.estado, SesionCaja.ESTADO_CERRADA)
+        self.assertIsNotNone(sesion.fecha_cierre)
+        self.assertEqual(sesion.monto_ventas_efectivo, Decimal("80.00"))
+        self.assertEqual(sesion.monto_ventas_digital, Decimal("170.00"))
+        self.assertEqual(sesion.monto_esperado, Decimal("180.00"))
+        self.assertEqual(sesion.monto_real, Decimal("180.00"))
+        self.assertEqual(sesion.diferencia, Decimal("0.00"))
+
+    def test_cierre_z_con_descuadre_exige_justificacion_y_registra_diferencia(self):
+        """PRB-60: Bloquea descuadres sin explicar y registra faltantes/sobrantes justificados."""
+        self.client.force_login(self.staff_user)
+        self.client.post("/caja/abrir/", {"monto_inicial": "100.00"})
+        sesion = SesionCaja.objects.get(estado=SesionCaja.ESTADO_ABIERTA)
+
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=2,
+            estado=Pedido.ESTADO_COBRADO,
+            total=Decimal("50.00"),
+        )
+        Pago.objects.create(
+            pedido=ped,
+            mesa=self.mesa1,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_EFECTIVO,
+            monto=Decimal("50.00"),
+            client_request_id="req-descuadre-001",
+        )
+
+        # Esperado = 150.00; contado = 142.50 sin observación -> debe rechazarse
+        resp_sin_obs = self.client.post(
+            "/caja/cerrar/",
+            {"monto_real": "142.50", "observaciones": ""},
+        )
+        self.assertEqual(resp_sin_obs.status_code, 200)
+        sesion.refresh_from_db()
+        self.assertEqual(sesion.estado, SesionCaja.ESTADO_ABIERTA)
+        self.assertContains(resp_sin_obs, "faltante")
+
+        # Ahora con justificación del descuadre -> se cierra con diferencia = -7.50
+        resp_con_obs = self.client.post(
+            "/caja/cerrar/",
+            {
+                "monto_real": "142.50",
+                "observaciones": "Faltante por error de vuelto en mesa 1",
+            },
+        )
+        self.assertEqual(resp_con_obs.status_code, 302)
+        sesion.refresh_from_db()
+        self.assertEqual(sesion.estado, SesionCaja.ESTADO_CERRADA)
+        self.assertEqual(sesion.diferencia, Decimal("-7.50"))
+        self.assertIn("error de vuelto", sesion.observaciones)
+
+        # Abrir nuevo turno tras cerrar el anterior y cerrar con sobrante (+5.00)
+        self.client.post("/caja/abrir/", {"monto_inicial": "50.00"})
+        sesion2 = SesionCaja.objects.get(estado=SesionCaja.ESTADO_ABIERTA)
+        self.client.post(
+            "/caja/cerrar/",
+            {
+                "monto_real": "55.00",
+                "observaciones": "Sobrante por propina en efectivo dejada en caja",
+            },
+        )
+        sesion2.refresh_from_db()
+        self.assertEqual(sesion2.estado, SesionCaja.ESTADO_CERRADA)
+        self.assertEqual(sesion2.diferencia, Decimal("5.00"))
+
+
+class ReportesVentasTests(TestCase):
+    """Pruebas integrales de reportes diarios de ventas y medios de pago (PRB-61)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="admin_reportes",
+            password="ClaveRep!2026",
+            is_staff=True,
+        )
+        self.mesa = Mesa.objects.create(
+            numero=5,
+            capacidad=6,
+            ubicacion="Segundo piso",
+            estado=Mesa.ESTADO_LIBRE,
+        )
+
+    def test_reportes_requiere_staff_autenticado(self):
+        """GET /reportes/ redirige al login cuando no hay sesión administrativa."""
+        resp = self.client.get("/reportes/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
+
+    def test_reporte_ventas_ticket_promedio_y_desglose_medios_pago(self):
+        """PRB-61: Calcula ventas totales, ticket promedio con pago dividido y desglose exacto."""
+        self.client.force_login(self.staff_user)
+        sesion = SesionCaja.objects.create(
+            cajero_id=1,
+            monto_inicial=Decimal("100.00"),
+            monto_esperado=Decimal("100.00"),
+            estado=SesionCaja.ESTADO_ABIERTA,
+        )
+
+        # Pedido 1: S/ 75.00 pagado dividido (S/ 40 Efectivo + S/ 35 Yape)
+        p1 = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=2,
+            estado=Pedido.ESTADO_COBRADO,
+            total=Decimal("75.00"),
+        )
+        Pago.objects.create(
+            pedido=p1,
+            mesa=self.mesa,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_EFECTIVO,
+            monto=Decimal("40.00"),
+            client_request_id="rep-p1-efec",
+        )
+        Pago.objects.create(
+            pedido=p1,
+            mesa=self.mesa,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_YAPE,
+            monto=Decimal("35.00"),
+            referencia="YAPE-101",
+            client_request_id="rep-p1-yape",
+        )
+
+        # Pedido 2: S/ 60.00 pagado con Plin
+        p2 = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=2,
+            estado=Pedido.ESTADO_COBRADO,
+            total=Decimal("60.00"),
+        )
+        Pago.objects.create(
+            pedido=p2,
+            mesa=self.mesa,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_PLIN,
+            monto=Decimal("60.00"),
+            referencia="PLIN-202",
+            client_request_id="rep-p2-plin",
+        )
+
+        # Pedido 3 (Para llevar): S/ 105.00 pagado con Tarjeta + S/ 10 propina
+        p3 = Pedido.objects.create(
+            mesa=None,
+            mozo_id=3,
+            estado=Pedido.ESTADO_COBRADO,
+            total=Decimal("105.00"),
+        )
+        Pago.objects.create(
+            pedido=p3,
+            mesa=None,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_TARJETA,
+            monto=Decimal("105.00"),
+            propina=Decimal("10.00"),
+            referencia="VISA-303",
+            client_request_id="rep-p3-tarj",
+        )
+
+        resp = self.client.get("/reportes/")
+        self.assertEqual(resp.status_code, 200)
+        # Ventas totales: 40 + 35 + 60 + 105 = 240.00
+        self.assertEqual(resp.context["ventas_dia"], Decimal("240.00"))
+        # 3 pedidos únicos (el cobro dividido cuenta como 1 pedido, no 2)
+        self.assertEqual(resp.context["pedidos_cobrados"], 3)
+        # Ticket promedio: 240.00 / 3 = 80.00
+        self.assertEqual(resp.context["ticket_promedio"], Decimal("80.00"))
+        self.assertEqual(resp.context["total_efectivo"], Decimal("40.00"))
+        self.assertEqual(resp.context["total_digital"], Decimal("200.00"))
+        self.assertEqual(resp.context["total_propinas"], Decimal("10.00"))
+
+        por_codigo = {m["codigo"]: m["monto"] for m in resp.context["desglose_medios"]}
+        self.assertEqual(por_codigo["EFECTIVO"], Decimal("40.00"))
+        self.assertEqual(por_codigo["YAPE"], Decimal("35.00"))
+        self.assertEqual(por_codigo["PLIN"], Decimal("60.00"))
+        self.assertEqual(por_codigo["TARJETA"], Decimal("105.00"))
+
+        self.assertContains(resp, "Conciliación con Caja")
+        self.assertContains(resp, "Efectivo")
+        self.assertContains(resp, "Yape")
+        self.assertContains(resp, "Plin")
+        self.assertContains(resp, "Tarjeta")
+
+    def test_reporte_filtro_fecha_vacia_y_fecha_invalida(self):
+        """PRB-61: Soporta consulta histórica sin datos y tolera fechas malformadas."""
+        self.client.force_login(self.staff_user)
+
+        resp_vacia = self.client.get("/reportes/?fecha=2025-01-15")
+        self.assertEqual(resp_vacia.status_code, 200)
+        self.assertEqual(resp_vacia.context["ventas_dia"], Decimal("0.00"))
+        self.assertEqual(resp_vacia.context["pedidos_cobrados"], 0)
+        self.assertEqual(resp_vacia.context["ticket_promedio"], Decimal("0.00"))
+
+        resp_invalida = self.client.get("/reportes/?fecha=fecha-invalida")
+        self.assertEqual(resp_invalida.status_code, 200)
+        self.assertTrue(resp_invalida.context["es_hoy"])

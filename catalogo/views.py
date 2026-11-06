@@ -1,11 +1,12 @@
 """Vistas del módulo web para gestión de catálogo, precios y pesca del día (PRB-19)."""
 
+from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from django.contrib import messages
-from django.contrib.auth import authenticate, login, logout
-from django.db import IntegrityError
+from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Avg, Count, Max, Min, ProtectedError, Q, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -14,8 +15,8 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from .forms import CategoriaForm, ProductoForm
-from .models import Categoria, Mesa, Pedido, Producto
+from .forms import AperturaCajaForm, CategoriaForm, CierreCajaForm, ProductoForm
+from .models import Categoria, Mesa, Pago, Pedido, Producto, SesionCaja
 from .sqlite_bootstrap import asegurar_tablas_sqlite, poblar_carta_ejemplo
 
 
@@ -205,20 +206,21 @@ def dashboard_catalogo(request):
 
     total_mesas = Mesa.objects.count()
     mesas_ocupadas = Mesa.objects.filter(
-        estado__in=[Mesa.ESTADO_OCUPADA, Mesa.ESTADO_ATENDIENDO]
+        estado__in=[
+            Mesa.ESTADO_OCUPADA,
+            Mesa.ESTADO_ATENDIENDO,
+            Mesa.ESTADO_ATENDIDA,
+        ]
     ).count()
     mesas_libres = Mesa.objects.filter(estado=Mesa.ESTADO_LIBRE).count()
-    mesas_pide_cuenta = Mesa.objects.filter(estado=Mesa.ESTADO_PIDE_CUENTA).count()
+    mesas_pide_cuenta = Mesa.objects.filter(
+        estado__in=[Mesa.ESTADO_PIDE_CUENTA, Mesa.ESTADO_CUENTA_SOLICITADA]
+    ).count()
     pct_mesas_ocupadas = (
         round((mesas_ocupadas / total_mesas) * 100, 1) if total_mesas else 0.0
     )
 
-    ventas_dia_agg = Pedido.objects.filter(
-        estado=Pedido.ESTADO_COBRADO,
-        fecha_creacion__date=hoy,
-    ).aggregate(total_ventas=Sum("total"), count_cobrados=Count("id"))
-    ventas_dia = ventas_dia_agg["total_ventas"] or Decimal("0.00")
-    total_pedidos_cobrados_hoy = ventas_dia_agg["count_cobrados"] or 0
+    ventas_dia, total_pedidos_cobrados_hoy = _calcular_ventas_y_pedidos_fecha(hoy)
 
     pedidos_pendientes = Pedido.objects.filter(
         estado__in=[Pedido.ESTADO_PENDIENTE, Pedido.ESTADO_COCINANDO]
@@ -288,21 +290,22 @@ def kpis_operativos_api(request):
 
     total_mesas = Mesa.objects.count()
     mesas_ocupadas = Mesa.objects.filter(
-        estado__in=[Mesa.ESTADO_OCUPADA, Mesa.ESTADO_ATENDIENDO]
+        estado__in=[
+            Mesa.ESTADO_OCUPADA,
+            Mesa.ESTADO_ATENDIENDO,
+            Mesa.ESTADO_ATENDIDA,
+        ]
     ).count()
     mesas_libres = Mesa.objects.filter(estado=Mesa.ESTADO_LIBRE).count()
-    mesas_pide_cuenta = Mesa.objects.filter(estado=Mesa.ESTADO_PIDE_CUENTA).count()
+    mesas_pide_cuenta = Mesa.objects.filter(
+        estado__in=[Mesa.ESTADO_PIDE_CUENTA, Mesa.ESTADO_CUENTA_SOLICITADA]
+    ).count()
     pct_mesas_ocupadas = (
         round((mesas_ocupadas / total_mesas) * 100, 1) if total_mesas else 0.0
     )
 
-    ventas_agg = Pedido.objects.filter(
-        estado=Pedido.ESTADO_COBRADO,
-        fecha_creacion__date=hoy,
-    ).aggregate(total_ventas=Sum("total"), count_cobrados=Count("id"))
-
-    ventas_dia = float(ventas_agg["total_ventas"] or Decimal("0.00"))
-    total_cobrados = ventas_agg["count_cobrados"] or 0
+    ventas_dia_dec, total_cobrados = _calcular_ventas_y_pedidos_fecha(hoy)
+    ventas_dia = float(ventas_dia_dec)
     platos_agotados = Producto.objects.filter(disponible=False).count()
     pedidos_pendientes = Pedido.objects.filter(
         estado__in=[Pedido.ESTADO_PENDIENTE, Pedido.ESTADO_COCINANDO]
@@ -741,3 +744,592 @@ def cargar_carta_ejemplo_view(request):
     else:
         messages.info(request, "Todos los platos de ejemplo ya estaban en la carta.")
     return redirect(_url_retorno_segura(request, "catalogo:dashboard"))
+
+
+# =============================================================================
+# Cierre de Caja y Arqueo por Turno (PRB-60) y Reportes de Ventas (PRB-61)
+# =============================================================================
+
+METODOS_PAGO_ORDEN = [
+    (Pago.METODO_EFECTIVO, "Efectivo"),
+    (Pago.METODO_YAPE, "Yape"),
+    (Pago.METODO_PLIN, "Plin"),
+    (Pago.METODO_TARJETA, "Tarjeta"),
+]
+
+
+def _calcular_ventas_y_pedidos_fecha(fecha_consulta):
+    """Retorna (total_ventas, pedidos_cobrados) conciliando pagos v2 y comandas."""
+    tablas = set(connection.introspection.table_names())
+    total_pagos = Decimal("0.00")
+    pedidos_con_pago = set()
+
+    if Pago._meta.db_table in tablas:
+        pagos_qs = Pago.objects.filter(fecha_pago__date=fecha_consulta)
+        total_pagos = pagos_qs.aggregate(s=Sum("monto"))["s"] or Decimal("0.00")
+        pedidos_con_pago = set(pagos_qs.values_list("pedido_id", flat=True))
+
+    legacy_qs = Pedido.objects.filter(
+        estado=Pedido.ESTADO_COBRADO,
+        fecha_creacion__date=fecha_consulta,
+    )
+    if pedidos_con_pago:
+        legacy_qs = legacy_qs.exclude(id__in=pedidos_con_pago)
+
+    legacy_agg = legacy_qs.aggregate(t=Sum("total"), c=Count("id"))
+    ventas_legacy = legacy_agg["t"] or Decimal("0.00")
+    count_legacy = legacy_agg["c"] or 0
+
+    ventas_totales = (total_pagos + ventas_legacy).quantize(Decimal("0.01"))
+    pedidos_totales = len(pedidos_con_pago) + count_legacy
+    return ventas_totales, pedidos_totales
+
+
+def _resolver_cajero_id(user):
+    """Resuelve un cajero_id válido respetando la FK a usuario(id) en PostgreSQL."""
+    tablas = set(connection.introspection.table_names())
+    if "usuario" not in tablas:
+        return user.id or 1
+
+    username = (getattr(user, "username", "") or "cajero_panel").strip()
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM usuario WHERE LOWER(username) = LOWER(%s) LIMIT 1",
+            [username],
+        )
+        fila = cur.fetchone()
+        if fila:
+            return fila[0]
+
+        if "rol" in tablas:
+            cur.execute("""
+                SELECT u.id
+                FROM usuario u
+                JOIN rol r ON r.id = u.rol_id
+                WHERE r.nombre IN ('CAJERO', 'ADMIN')
+                ORDER BY CASE WHEN r.nombre = 'CAJERO' THEN 0 ELSE 1 END, u.id ASC
+                LIMIT 1
+                """)
+            fila = cur.fetchone()
+            if fila:
+                return fila[0]
+
+        cur.execute("SELECT id FROM usuario ORDER BY id ASC LIMIT 1")
+        fila = cur.fetchone()
+        if fila:
+            return fila[0]
+
+        if "rol" in tablas:
+            cur.execute("SELECT id FROM rol WHERE nombre = 'CAJERO' LIMIT 1")
+            rol_row = cur.fetchone()
+            if rol_row:
+                rol_id = rol_row[0]
+            else:
+                cur.execute("INSERT INTO rol (nombre) VALUES ('CAJERO') RETURNING id")
+                rol_id = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO usuario (username, clave_hash, rol_id) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                [username[:50], "!django-staff-managed", rol_id],
+            )
+            return cur.fetchone()[0]
+
+    return user.id or 1
+
+
+def _mapa_nombres_cajeros(cajero_ids):
+    """Devuelve {cajero_id: nombre_legible} consultando usuario o auth_user."""
+    ids = {cid for cid in cajero_ids if cid is not None}
+    if not ids:
+        return {}
+
+    mapa = {}
+    tablas = set(connection.introspection.table_names())
+    if "usuario" in tablas:
+        placeholders = ", ".join(["%s"] * len(ids))
+        with connection.cursor() as cur:
+            cur.execute(
+                f"SELECT id, username FROM usuario WHERE id IN ({placeholders})",
+                list(ids),
+            )
+            for uid, uname in cur.fetchall():
+                mapa[uid] = uname
+
+    faltantes = ids - set(mapa.keys())
+    if faltantes:
+        User = get_user_model()
+        for u in User.objects.filter(id__in=faltantes).only("id", "username"):
+            mapa[u.id] = u.username
+
+    for cid in ids:
+        mapa.setdefault(cid, f"Cajero #{cid}")
+    return mapa
+
+
+def _calcular_resumen_sesion(sesion):
+    """Calcula movimientos, totales por medio de pago y monto esperado del turno."""
+    pagos_qs = (
+        Pago.objects.filter(sesion_caja=sesion)
+        .select_related("pedido", "mesa")
+        .order_by("-fecha_pago", "-id")
+    )
+    agregados_metodo = {
+        item["metodo"]: {
+            "monto": item["monto"] or Decimal("0.00"),
+            "propinas": item["propinas"] or Decimal("0.00"),
+            "cantidad": item["cantidad"] or 0,
+        }
+        for item in pagos_qs.values("metodo").annotate(
+            monto=Sum("monto"),
+            propinas=Sum("propina"),
+            cantidad=Count("id"),
+        )
+    }
+
+    tiene_pagos = bool(agregados_metodo)
+    if tiene_pagos:
+        efectivo = agregados_metodo.get(Pago.METODO_EFECTIVO, {}).get(
+            "monto", Decimal("0.00")
+        )
+        yape = agregados_metodo.get(Pago.METODO_YAPE, {}).get("monto", Decimal("0.00"))
+        plin = agregados_metodo.get(Pago.METODO_PLIN, {}).get("monto", Decimal("0.00"))
+        tarjeta = agregados_metodo.get(Pago.METODO_TARJETA, {}).get(
+            "monto", Decimal("0.00")
+        )
+        ventas_digital = (yape + plin + tarjeta).quantize(Decimal("0.01"))
+    else:
+        efectivo = (sesion.monto_ventas_efectivo or Decimal("0.00")).quantize(
+            Decimal("0.01")
+        )
+        ventas_digital = (sesion.monto_ventas_digital or Decimal("0.00")).quantize(
+            Decimal("0.01")
+        )
+
+    efectivo = efectivo.quantize(Decimal("0.01"))
+    total_ventas = (efectivo + ventas_digital).quantize(Decimal("0.01"))
+    total_propinas = sum(
+        (datos["propinas"] for datos in agregados_metodo.values()),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    total_movimientos = sum(datos["cantidad"] for datos in agregados_metodo.values())
+    monto_esperado = (sesion.monto_inicial + efectivo).quantize(Decimal("0.01"))
+
+    desglose_metodos = []
+    for codigo, etiqueta in METODOS_PAGO_ORDEN:
+        datos = agregados_metodo.get(
+            codigo,
+            {
+                "monto": (
+                    efectivo
+                    if (not tiene_pagos and codigo == Pago.METODO_EFECTIVO)
+                    else Decimal("0.00")
+                ),
+                "propinas": Decimal("0.00"),
+                "cantidad": 0,
+            },
+        )
+        monto_m = datos["monto"].quantize(Decimal("0.01"))
+        pct = (
+            round(float((monto_m / total_ventas) * Decimal("100")), 1)
+            if total_ventas > Decimal("0.00")
+            else 0.0
+        )
+        desglose_metodos.append(
+            {
+                "codigo": codigo,
+                "nombre": etiqueta,
+                "monto": monto_m,
+                "propinas": datos["propinas"].quantize(Decimal("0.01")),
+                "cantidad": datos["cantidad"],
+                "porcentaje": pct,
+                "es_efectivo": codigo == Pago.METODO_EFECTIVO,
+            }
+        )
+
+    return {
+        "efectivo": efectivo,
+        "ventas_digital": ventas_digital,
+        "total_ventas": total_ventas,
+        "total_propinas": total_propinas,
+        "monto_esperado": monto_esperado,
+        "total_movimientos": total_movimientos,
+        "desglose_metodos": desglose_metodos,
+        "movimientos": list(pagos_qs[:50]),
+    }
+
+
+def _enriquecer_sesion_historial(sesion, mapa_cajeros):
+    """Agrega metadatos de visualización de arqueo a una sesión cerrada."""
+    sesion.cajero_nombre = mapa_cajeros.get(
+        sesion.cajero_id, f"Cajero #{sesion.cajero_id}"
+    )
+    dif = sesion.diferencia
+    if dif is None or dif == Decimal("0.00"):
+        sesion.arqueo_estado = "CUADRADO"
+        sesion.arqueo_etiqueta = "Cuadrado exacto"
+        sesion.arqueo_clase = "up"
+    elif dif > Decimal("0.00"):
+        sesion.arqueo_estado = "SOBRANTE"
+        sesion.arqueo_etiqueta = f"Sobrante (+S/ {dif:.2f})"
+        sesion.arqueo_clase = "warn"
+    else:
+        sesion.arqueo_estado = "FALTANTE"
+        sesion.arqueo_etiqueta = f"Faltante (-S/ {abs(dif):.2f})"
+        sesion.arqueo_clase = "danger"
+    sesion.total_turno = (
+        (sesion.monto_ventas_efectivo or Decimal("0.00"))
+        + (sesion.monto_ventas_digital or Decimal("0.00"))
+    ).quantize(Decimal("0.01"))
+    return sesion
+
+
+def _contexto_panel_caja(form_apertura=None, form_cierre=None):
+    """Construye el contexto completo de la pantalla de Caja y Arqueo (PRB-60)."""
+    sesion_abierta = (
+        SesionCaja.objects.filter(estado=SesionCaja.ESTADO_ABIERTA)
+        .order_by("-fecha_apertura", "-id")
+        .first()
+    )
+    historial = list(
+        SesionCaja.objects.filter(estado=SesionCaja.ESTADO_CERRADA).order_by(
+            "-fecha_cierre", "-id"
+        )[:20]
+    )
+
+    cajero_ids = [s.cajero_id for s in historial]
+    if sesion_abierta:
+        cajero_ids.append(sesion_abierta.cajero_id)
+    mapa_cajeros = _mapa_nombres_cajeros(cajero_ids)
+
+    resumen_actual = None
+    if sesion_abierta:
+        sesion_abierta.cajero_nombre = mapa_cajeros.get(
+            sesion_abierta.cajero_id, f"Cajero #{sesion_abierta.cajero_id}"
+        )
+        resumen_actual = _calcular_resumen_sesion(sesion_abierta)
+        if form_cierre is None:
+            form_cierre = CierreCajaForm(
+                initial={"monto_real": resumen_actual["monto_esperado"]},
+                monto_esperado=resumen_actual["monto_esperado"],
+            )
+
+    if form_apertura is None:
+        form_apertura = AperturaCajaForm()
+
+    historial = [_enriquecer_sesion_historial(s, mapa_cajeros) for s in historial]
+
+    return {
+        "nav_active": "caja",
+        "hoy": timezone.localdate(),
+        "sesion_abierta": sesion_abierta,
+        "resumen_actual": resumen_actual,
+        "form_apertura": form_apertura,
+        "form_cierre": form_cierre,
+        "historial_sesiones": historial,
+    }
+
+
+@staff_required
+def caja_arqueo(request):
+    """Pantalla principal de apertura de turno, movimientos y Cierre Z (PRB-60)."""
+    asegurar_tablas_sqlite()
+    return render(request, "catalogo/caja.html", _contexto_panel_caja())
+
+
+@staff_required
+@require_POST
+def abrir_caja(request):
+    """Abre un turno de caja garantizando que solo exista una caja ABIERTA (PRB-60)."""
+    asegurar_tablas_sqlite()
+    form = AperturaCajaForm(request.POST)
+    if not form.is_valid():
+        messages.error(
+            request,
+            "No se pudo abrir la caja. Revisa el monto inicial ingresado.",
+        )
+        return render(
+            request,
+            "catalogo/caja.html",
+            _contexto_panel_caja(form_apertura=form),
+        )
+
+    monto_inicial = form.cleaned_data["monto_inicial"]
+    observaciones = form.cleaned_data["observaciones"]
+
+    try:
+        with transaction.atomic():
+            ya_abierta = (
+                SesionCaja.objects.select_for_update()
+                .filter(estado=SesionCaja.ESTADO_ABIERTA)
+                .exists()
+            )
+            if ya_abierta:
+                messages.error(
+                    request,
+                    "Solo puede existir una caja ABIERTA a la vez. "
+                    "Realiza el Cierre Z del turno activo antes de abrir uno nuevo.",
+                )
+                return redirect("catalogo:caja")
+
+            cajero_id = _resolver_cajero_id(request.user)
+            sesion = SesionCaja.objects.create(
+                cajero_id=cajero_id,
+                monto_inicial=monto_inicial,
+                monto_ventas_efectivo=Decimal("0.00"),
+                monto_ventas_digital=Decimal("0.00"),
+                monto_esperado=monto_inicial,
+                estado=SesionCaja.ESTADO_ABIERTA,
+                observaciones=observaciones or None,
+            )
+    except IntegrityError:
+        messages.error(
+            request,
+            "Solo puede existir una caja ABIERTA a la vez. "
+            "Otro usuario acaba de iniciar un turno activo.",
+        )
+        return redirect("catalogo:caja")
+
+    messages.success(
+        request,
+        f"Turno de Caja #{sesion.id} abierto correctamente con fondo inicial "
+        f"de S/ {monto_inicial:.2f}.",
+    )
+    return redirect("catalogo:caja")
+
+
+@staff_required
+@require_POST
+def cerrar_caja(request):
+    """Ejecuta el arqueo físico y Cierre Z calculando sobrantes o faltantes (PRB-60)."""
+    asegurar_tablas_sqlite()
+
+    with transaction.atomic():
+        sesion = (
+            SesionCaja.objects.select_for_update()
+            .filter(estado=SesionCaja.ESTADO_ABIERTA)
+            .order_by("-fecha_apertura", "-id")
+            .first()
+        )
+        if sesion is None:
+            messages.error(
+                request,
+                "No existe ninguna sesión de caja ABIERTA para realizar el cierre.",
+            )
+            return redirect("catalogo:caja")
+
+        resumen = _calcular_resumen_sesion(sesion)
+        monto_esperado = resumen["monto_esperado"]
+        form = CierreCajaForm(request.POST, monto_esperado=monto_esperado)
+
+        if not form.is_valid():
+            errores = []
+            for lista in form.errors.values():
+                errores.extend(lista)
+            mensaje_error = (
+                " ".join(errores)
+                if errores
+                else "Datos de cierre inválidos. Verifica el efectivo contado."
+            )
+            messages.error(request, mensaje_error)
+            return render(
+                request,
+                "catalogo/caja.html",
+                _contexto_panel_caja(form_cierre=form),
+            )
+
+        monto_real = form.cleaned_data["monto_real"]
+        nota_cierre = form.cleaned_data["observaciones"]
+        diferencia = (monto_real - monto_esperado).quantize(Decimal("0.01"))
+
+        if sesion.observaciones and nota_cierre:
+            observaciones_finales = f"{sesion.observaciones} | Cierre Z: {nota_cierre}"
+        elif nota_cierre:
+            observaciones_finales = nota_cierre
+        else:
+            observaciones_finales = sesion.observaciones
+
+        sesion.monto_ventas_efectivo = resumen["efectivo"]
+        sesion.monto_ventas_digital = resumen["ventas_digital"]
+        sesion.monto_esperado = monto_esperado
+        sesion.monto_real = monto_real
+        sesion.diferencia = diferencia
+        sesion.fecha_cierre = timezone.now()
+        sesion.estado = SesionCaja.ESTADO_CERRADA
+        sesion.observaciones = observaciones_finales
+        sesion.save()
+
+    if diferencia == Decimal("0.00"):
+        messages.success(
+            request,
+            f"Cierre Z de Caja #{sesion.id} completado: arqueo CUADRADO "
+            f"exacto (S/ {monto_real:.2f}).",
+        )
+    elif diferencia > Decimal("0.00"):
+        messages.warning(
+            request,
+            f"Cierre Z de Caja #{sesion.id} registrado con SOBRANTE de +S/ {diferencia:.2f} "
+            f"(Esperado: S/ {monto_esperado:.2f} · Contado: S/ {monto_real:.2f}).",
+        )
+    else:
+        messages.warning(
+            request,
+            f"Cierre Z de Caja #{sesion.id} registrado con FALTANTE de -S/ {abs(diferencia):.2f} "
+            f"(Esperado: S/ {monto_esperado:.2f} · Contado: S/ {monto_real:.2f}).",
+        )
+    return redirect("catalogo:caja")
+
+
+@staff_required
+def reportes_ventas(request):
+    """Reporte operativo de ventas del día, ticket promedio y medios de pago (PRB-61).
+
+    Alcance estricto PRB-61: ventas del día, ticket promedio, desglose por medio de
+    pago (EFECTIVO, YAPE, PLIN, TARJETA) y conciliación con sesiones de caja.
+    El ranking de platos y la exportación CSV quedan fuera de esta entrega.
+    """
+    asegurar_tablas_sqlite()
+    hoy = timezone.localdate()
+    fecha_param = (request.GET.get("fecha") or "").strip()
+
+    fecha_consulta = hoy
+    if fecha_param:
+        try:
+            fecha_consulta = date.fromisoformat(fecha_param)
+        except ValueError:
+            messages.warning(
+                request,
+                "Formato de fecha inválido. Mostrando el reporte operativo de hoy.",
+            )
+            fecha_consulta = hoy
+
+    pagos_dia_qs = (
+        Pago.objects.filter(fecha_pago__date=fecha_consulta)
+        .select_related("pedido", "mesa", "sesion_caja")
+        .order_by("-fecha_pago", "-id")
+    )
+
+    ventas_dia, pedidos_cobrados = _calcular_ventas_y_pedidos_fecha(fecha_consulta)
+    ticket_promedio = (
+        (ventas_dia / Decimal(pedidos_cobrados)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        if pedidos_cobrados > 0
+        else Decimal("0.00")
+    )
+
+    agregados_metodo = {
+        item["metodo"]: {
+            "monto": item["monto"] or Decimal("0.00"),
+            "propinas": item["propinas"] or Decimal("0.00"),
+            "transacciones": item["transacciones"] or 0,
+            "pedidos": item["pedidos"] or 0,
+        }
+        for item in pagos_dia_qs.values("metodo").annotate(
+            monto=Sum("monto"),
+            propinas=Sum("propina"),
+            transacciones=Count("id"),
+            pedidos=Count("pedido_id", distinct=True),
+        )
+    }
+
+    total_pagos_registrados = sum(
+        (d["monto"] for d in agregados_metodo.values()),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    total_propinas = sum(
+        (d["propinas"] for d in agregados_metodo.values()),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    total_transacciones = sum(d["transacciones"] for d in agregados_metodo.values())
+
+    desglose_medios = []
+    for codigo, etiqueta in METODOS_PAGO_ORDEN:
+        datos = agregados_metodo.get(
+            codigo,
+            {
+                "monto": Decimal("0.00"),
+                "propinas": Decimal("0.00"),
+                "transacciones": 0,
+                "pedidos": 0,
+            },
+        )
+        monto_m = datos["monto"].quantize(Decimal("0.01"))
+        pct = (
+            round(float((monto_m / total_pagos_registrados) * Decimal("100")), 1)
+            if total_pagos_registrados > Decimal("0.00")
+            else 0.0
+        )
+        desglose_medios.append(
+            {
+                "codigo": codigo,
+                "nombre": etiqueta,
+                "monto": monto_m,
+                "propinas": datos["propinas"].quantize(Decimal("0.01")),
+                "transacciones": datos["transacciones"],
+                "pedidos": datos["pedidos"],
+                "porcentaje": pct,
+                "es_efectivo": codigo == Pago.METODO_EFECTIVO,
+            }
+        )
+
+    total_efectivo = (
+        agregados_metodo.get(Pago.METODO_EFECTIVO, {}).get("monto", Decimal("0.00"))
+    ).quantize(Decimal("0.01"))
+    total_digital = (total_pagos_registrados - total_efectivo).quantize(Decimal("0.01"))
+    pct_efectivo = (
+        round(float((total_efectivo / total_pagos_registrados) * Decimal("100")), 1)
+        if total_pagos_registrados > Decimal("0.00")
+        else 0.0
+    )
+    pct_digital = (
+        round(100.0 - pct_efectivo, 1)
+        if total_pagos_registrados > Decimal("0.00")
+        else 0.0
+    )
+
+    # Conciliación con sesiones de caja abiertas o cerradas en la fecha consultada
+    sesiones_dia = list(
+        SesionCaja.objects.filter(
+            Q(fecha_apertura__date=fecha_consulta)
+            | Q(fecha_cierre__date=fecha_consulta)
+        ).order_by("-fecha_apertura", "-id")
+    )
+    mapa_cajeros = _mapa_nombres_cajeros([s.cajero_id for s in sesiones_dia])
+    for s in sesiones_dia:
+        if s.estado == SesionCaja.ESTADO_ABIERTA:
+            res_s = _calcular_resumen_sesion(s)
+            s.cajero_nombre = mapa_cajeros.get(s.cajero_id, f"Cajero #{s.cajero_id}")
+            s.monto_ventas_efectivo = res_s["efectivo"]
+            s.monto_ventas_digital = res_s["ventas_digital"]
+            s.monto_esperado = res_s["monto_esperado"]
+            s.total_turno = res_s["total_ventas"]
+            s.arqueo_etiqueta = "Turno en curso"
+            s.arqueo_clase = "neutral"
+        else:
+            _enriquecer_sesion_historial(s, mapa_cajeros)
+
+    total_sesiones_dia = sum(
+        (s.total_turno for s in sesiones_dia), Decimal("0.00")
+    ).quantize(Decimal("0.01"))
+
+    context = {
+        "nav_active": "reportes",
+        "hoy": hoy,
+        "fecha_consulta": fecha_consulta,
+        "es_hoy": fecha_consulta == hoy,
+        "ventas_dia": ventas_dia,
+        "pedidos_cobrados": pedidos_cobrados,
+        "ticket_promedio": ticket_promedio,
+        "total_pagos_registrados": total_pagos_registrados,
+        "total_propinas": total_propinas,
+        "total_transacciones": total_transacciones,
+        "total_efectivo": total_efectivo,
+        "total_digital": total_digital,
+        "pct_efectivo": pct_efectivo,
+        "pct_digital": pct_digital,
+        "desglose_medios": desglose_medios,
+        "pagos_recientes": list(pagos_dia_qs[:50]),
+        "sesiones_dia": sesiones_dia,
+        "total_sesiones_dia": total_sesiones_dia,
+    }
+    return render(request, "catalogo/reportes.html", context)

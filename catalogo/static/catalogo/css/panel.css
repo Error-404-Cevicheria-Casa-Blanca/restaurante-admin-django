@@ -546,6 +546,11 @@ a {
   color: var(--warning-text);
 }
 
+.badge-trend.danger {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
 .badge-trend.neutral {
   background: #f1f5f9;
   color: #475569;
@@ -1372,11 +1377,13 @@ a {
   color: #15803d;
 }
 
-.mesa-estado-atendiendo {
+.mesa-estado-atendiendo,
+.mesa-estado-atendida {
   border-color: #bfdbfe;
   background: #eff6ff;
 }
-.mesa-estado-atendiendo .mesa-status-pill {
+.mesa-estado-atendiendo .mesa-status-pill,
+.mesa-estado-atendida .mesa-status-pill {
   background: #dbeafe;
   color: #1d4ed8;
 }
@@ -1390,11 +1397,13 @@ a {
   color: #b91c1c;
 }
 
-.mesa-estado-pide_cuenta {
+.mesa-estado-pide_cuenta,
+.mesa-estado-cuenta_solicitada {
   border-color: #fde68a;
   background: #fffbeb;
 }
-.mesa-estado-pide_cuenta .mesa-status-pill {
+.mesa-estado-pide_cuenta .mesa-status-pill,
+.mesa-estado-cuenta_solicitada .mesa-status-pill {
   background: #fef3c7;
   color: #b45309;
 }
@@ -1462,9 +1471,116 @@ a {
   background: #f1f5f9;
   color: #475569;
 }
-.ped-status-cancelado {
+.ped-status-cancelado,
+.ped-status-anulado {
   background: #f3f4f6;
   color: #9ca3af;
+}
+
+/* ==========================================================================
+   Caja y Arqueo por Turno (PRB-60) & Reportes de Ventas (PRB-61)
+   ========================================================================== */
+.caja-layout-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.metodo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.metodo-efectivo {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+}
+
+.metodo-yape {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border: 1px solid #ddd6fe;
+}
+
+.metodo-plin {
+  background: #ecfeff;
+  color: #0e7490;
+  border: 1px solid #a5f3fc;
+}
+
+.metodo-tarjeta {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.pay-bar-track {
+  width: 100%;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.pay-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.pay-fill-efectivo { background: #10b981; }
+.pay-fill-yape { background: #7c3aed; }
+.pay-fill-plin { background: #06b6d4; }
+.pay-fill-tarjeta { background: #2563eb; }
+
+.arqueo-preview-box {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: #f8fafc;
+  margin: 12px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.arqueo-preview-box.is-cuadrado {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: #065f46;
+}
+
+.arqueo-preview-box.is-sobrante {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: #92400e;
+}
+
+.arqueo-preview-box.is-faltante {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: #991b1b;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .caja-layout-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* --- Responsividad --- */

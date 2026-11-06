@@ -16,7 +16,7 @@
         <img src="{% static 'catalogo/img/logo.png' %}" alt="Logo La Casa Blanca" class="brand-logo-img">
         <div>
           <div class="brand-title">La Casa Blanca</div>
-          <div class="brand-subtitle">Panel de gestión · Carta</div>
+          <div class="brand-subtitle">Panel de gestión · Operaciones</div>
         </div>
       </a>
 
@@ -30,6 +30,26 @@
             <rect x="3" y="14" width="7" height="7" rx="1.5"/>
           </svg>
           <span>Dashboard</span>
+        </a>
+
+        <div class="nav-section-label">Caja y Finanzas</div>
+        <a href="{% url 'catalogo:caja' %}" class="nav-link {% if nav_active == 'caja' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="6" width="20" height="14" rx="2"/>
+            <path d="M6 6V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/>
+            <circle cx="12" cy="13" r="3"/>
+          </svg>
+          <span>Caja y Arqueo</span>
+        </a>
+
+        <a href="{% url 'catalogo:reportes' %}" class="nav-link {% if nav_active == 'reportes' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18"/>
+            <path d="M7 16v-5"/>
+            <path d="M12 16V8"/>
+            <path d="M17 16v-3"/>
+          </svg>
+          <span>Reportes de Ventas</span>
         </a>
 
         <div class="nav-section-label">Catálogo</div>
