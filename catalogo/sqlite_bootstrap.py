@@ -149,7 +149,7 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
         cur.execute("""
             CREATE TABLE IF NOT EXISTS producto (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nombre VARCHAR(150) NOT NULL,
+                nombre VARCHAR(150) NOT NULL UNIQUE,
                 descripcion TEXT,
                 precio NUMERIC(10, 2) NOT NULL CHECK (precio > 0),
                 disponible BOOLEAN NOT NULL DEFAULT 1,
@@ -186,9 +186,19 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 mozo_id INTEGER NOT NULL,
                 fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
-                total NUMERIC(10, 2) NOT NULL DEFAULT 0.00
+                total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                client_request_id VARCHAR(64) UNIQUE,
+                version INTEGER NOT NULL DEFAULT 1
             );
             """)
+        for col_def in (
+            "client_request_id VARCHAR(64)",
+            "version INTEGER NOT NULL DEFAULT 1",
+        ):
+            try:
+                cur.execute(f"ALTER TABLE pedido ADD COLUMN {col_def}")
+            except Exception:
+                pass
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sesion_caja (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,6 +232,31 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 referencia VARCHAR(100),
                 client_request_id VARCHAR(64) NOT NULL UNIQUE,
                 fecha_pago TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evento_pedido (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id INTEGER NOT NULL REFERENCES pedido(id) ON DELETE CASCADE,
+                estado_anterior VARCHAR(20),
+                estado_nuevo VARCHAR(20) NOT NULL,
+                usuario_id INTEGER,
+                motivo VARCHAR(255),
+                fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS impresion_cola (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id INTEGER REFERENCES pedido(id) ON DELETE CASCADE,
+                tipo VARCHAR(20) NOT NULL,
+                estacion VARCHAR(30),
+                payload TEXT NOT NULL,
+                estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+                intentos INTEGER NOT NULL DEFAULT 0,
+                error TEXT,
+                fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                fecha_impresion TIMESTAMP
             );
             """)
     _TABLAS_ASEGURADAS.add(using)

@@ -187,6 +187,17 @@ class Pedido(models.Model):
         default=Decimal("0.00"),
         verbose_name="Total (S/)",
     )
+    client_request_id = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name="UUID Idempotencia",
+    )
+    version = models.IntegerField(
+        default=1,
+        verbose_name="Versión Concurrente",
+    )
 
     class Meta:
         db_table = "pedido"

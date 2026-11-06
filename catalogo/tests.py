@@ -598,6 +598,81 @@ class DashboardOperativoTests(TestCase):
         self.assertIn("/login/", resp.url)
 
 
+class EsquemaV2ModelTests(TestCase):
+    """Pruebas unitarias de modelos y tablas introducidos en el esquema v2 (PRB-51)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        self.mesa = Mesa.objects.create(
+            numero=10,
+            capacidad=4,
+            ubicacion="Segundo piso",
+            estado=Mesa.ESTADO_LIBRE,
+        )
+
+    def test_sesion_caja_creacion_defaults_y_str(self):
+        """Verifica la persistencia, valores por defecto y representación de SesionCaja."""
+        sesion = SesionCaja.objects.create(
+            cajero_id=5,
+            monto_inicial=Decimal("150.00"),
+            monto_esperado=Decimal("150.00"),
+        )
+        self.assertIsNotNone(sesion.id)
+        self.assertEqual(sesion.estado, SesionCaja.ESTADO_ABIERTA)
+        self.assertEqual(sesion.monto_ventas_efectivo, Decimal("0.00"))
+        self.assertEqual(sesion.monto_ventas_digital, Decimal("0.00"))
+        self.assertIn(f"Caja #{sesion.id}", str(sesion))
+
+    def test_pedido_soporta_anulado_version_idempotencia_y_para_llevar(self):
+        """Verifica soporte para ANULADO, client_request_id, version y pedidos sin mesa."""
+        pedido_llevar = Pedido.objects.create(
+            mesa=None,
+            mozo_id=1,
+            estado=Pedido.ESTADO_ANULADO,
+            total=Decimal("45.00"),
+            client_request_id="uuid-idempotencia-12345",
+            version=1,
+        )
+        self.assertIsNone(pedido_llevar.mesa)
+        self.assertEqual(pedido_llevar.estado, Pedido.ESTADO_ANULADO)
+        self.assertEqual(pedido_llevar.version, 1)
+        self.assertEqual(pedido_llevar.client_request_id, "uuid-idempotencia-12345")
+        self.assertIn("Para llevar", str(pedido_llevar))
+
+    def test_pago_con_mesa_y_sin_mesa_str_seguro(self):
+        """Verifica registro de pago multimoneda, relación con sesion_caja y __str__ seguro."""
+        sesion = SesionCaja.objects.create(cajero_id=5, monto_inicial=Decimal("100.00"))
+        pedido = Pedido.objects.create(
+            mesa=self.mesa, mozo_id=1, total=Decimal("80.00")
+        )
+
+        pago_salon = Pago.objects.create(
+            pedido=pedido,
+            mesa=self.mesa,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_YAPE,
+            monto=Decimal("80.00"),
+            client_request_id="req-pago-salon-001",
+        )
+        self.assertEqual(pago_salon.metodo, Pago.METODO_YAPE)
+        self.assertEqual(pago_salon.sesion_caja, sesion)
+        self.assertIn("Mesa 10", str(pago_salon))
+
+        pago_llevar = Pago.objects.create(
+            pedido=pedido,
+            mesa=None,
+            sesion_caja=sesion,
+            metodo=Pago.METODO_EFECTIVO,
+            monto=Decimal("50.00"),
+            client_request_id="req-pago-llevar-002",
+        )
+        self.assertIn("Para llevar", str(pago_llevar))
+
+
 class CajaArqueoTests(TestCase):
     """Pruebas integrales de apertura, control de turno único y Cierre Z (PRB-60)."""
 
