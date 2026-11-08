@@ -1,0 +1,39 @@
+======================================================================
+RESULTADO DE SUITE DE PRUEBAS AUTOMATIZADAS (61 TESTS)
+======================================================================
+
+Ran 61 tests in 105.333s - OK (EXIT=0)
+
+======================================================================
+REPORTE DE COBERTURA DE CODIGO (COVERAGE REPORT >= 85%)
+======================================================================
+
+Name                                                                   Stmts   Miss  Cover
+------------------------------------------------------------------------------------------
+catalogo\__init__.py                                                       0      0   100%
+catalogo\admin.py                                                         67      2    97%
+catalogo\apps.py                                                           9      0   100%
+catalogo\forms.py                                                        114     23    80%
+catalogo\kds_service.py                                                  199     35    82%
+catalogo\management\__init__.py                                            0      0   100%
+catalogo\management\commands\__init__.py                                   0      0   100%
+catalogo\management\commands\seed_catalogo.py                             12     12     0%
+catalogo\management\commands\seed_produccion.py                           15      2    87%
+catalogo\migrations\0001_initial.py                                        7      0   100%
+catalogo\migrations\0002_producto_categoria.py                             5      0   100%
+catalogo\migrations\0003_mesa_pedido.py                                    5      0   100%
+catalogo\migrations\0004_mesa_mozo_id_fecha_apertura_fecha_cierre.py       4      0   100%
+catalogo\migrations\0005_pago_sesioncaja.py                                5      0   100%
+catalogo\migrations\0006_detallepedido_movimientostock.py                  6      0   100%
+catalogo\migrations\0007_rol_usuario.py                                    4      0   100%
+catalogo\migrations\0008_eventopedido.py                                   4      0   100%
+catalogo\migrations\__init__.py                                            0      0   100%
+catalogo\models.py                                                       339     18    95%
+catalogo\produccion_seeds.py                                             140     29    79%
+catalogo\sqlite_bootstrap.py                                              60     21    65%
+catalogo\stock_service.py                                                242     32    87%
+catalogo\tests.py                                                        889     11    99%
+catalogo\urls.py                                                           4      0   100%
+catalogo\views.py                                                        903    262    71%
+------------------------------------------------------------------------------------------
+TOTAL                                                                   3033    447    85%

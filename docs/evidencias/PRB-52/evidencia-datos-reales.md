@@ -18,11 +18,11 @@
 1. **4 Roles Operativos Canónicos (`rol`)**:
    - `ADMIN`, `MOZO`, `COCINERO`, `CAJERO`.
 2. **5 Cuentas Operativas Base con Contraseña Segura y PIN de 4 Dígitos (`usuario`)**:
-   - `admin_casablanca` (`ADMIN`) · PIN inicial: `1040`
-   - `cajero_01` (`CAJERO`) · PIN inicial: `2040`
-   - `mozo_01` (`MOZO` · Piso 1) · PIN inicial: `3011`
-   - `mozo_02` (`MOZO` · Piso 2) · PIN inicial: `3022`
-   - `cocinero_01` (`COCINERO` · Cocina / Barra Fría) · PIN inicial: `4010`
+   - `admin_casablanca` (`ADMIN`) · Hash BCrypt verificado
+   - `cajero_01` (`CAJERO`) · Hash BCrypt verificado
+   - `mozo_01` (`MOZO` · Piso 1) · Hash BCrypt verificado
+   - `mozo_02` (`MOZO` · Piso 2) · Hash BCrypt verificado
+   - `cocinero_01` (`COCINERO` · Cocina / Barra Fría) · Hash BCrypt verificado
    - Gestión y rotación en vivo disponible en `/personal/` (alta de personal, cambio de rol/clave/PIN y desbloqueo de cuentas tras intentos fallidos).
 3. **5 Categorías Oficiales y 15 Platos Marinos Reales con Precios y Fotos PNG Locales (`categoria`, `producto`)**:
    - **Entradas Marinas**: Leche de Tigre Clásica (`S/ 25.00`), Causa de Pulpa de Cangrejo (`S/ 32.00`), Choros a la Chalaca (`S/ 24.00`).

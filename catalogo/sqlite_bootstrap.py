@@ -277,7 +277,10 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 precio_unitario NUMERIC(10, 2) NOT NULL CHECK (precio_unitario > 0),
                 cantidad INTEGER NOT NULL CHECK (cantidad >= 1),
                 notas VARCHAR(255),
-                subtotal NUMERIC(10, 2) NOT NULL CHECK (subtotal >= 0)
+                subtotal NUMERIC(10, 2) NOT NULL CHECK (subtotal >= 0),
+                estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+                estacion VARCHAR(30) DEFAULT 'COCINA_CALIENTE',
+                anulado_motivo VARCHAR(255)
             );
             """)
         cur.execute("""

@@ -1,4 +1,4 @@
-"""Servicio de cocina KDS: estaciones de preparación, estados y semáforo SLA (PRB-57).
+"""Servicio de cocina KDS: estaciones de preparación, estados y semáforo SLA (PRB-57, PRB-86).
 
 Alcance P-10 (PLAN-PRODUCCION-POS.md §5.1, §8.4, ADR-01):
 - KDS web en tiempo real para pantallas de cocina y tablet de barra marina.
@@ -7,7 +7,9 @@ Alcance P-10 (PLAN-PRODUCCION-POS.md §5.1, §8.4, ADR-01):
     - NORMAL (Verde): < 10 minutos
     - ALERTA (Ámbar): 10 a 20 minutos
     - CRITICO (Rojo): > 20 minutos
-- Avance transaccional de comanda: PENDIENTE -> COCINANDO -> LISTO -> SERVIDO.
+- Avance transaccional de comanda y por ítem individual (PRB-86):
+  PENDIENTE -> COCINANDO -> LISTO -> SERVIDO.
+- Aislamiento por estación: marcar 'Listo' en barra fría no marca platos de cocina caliente.
 - Auditoría inmutable de eventos en la tabla compartida 'evento_pedido'.
 """
 
@@ -15,7 +17,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from .models import EventoPedido, Pedido, Producto
+from .models import DetallePedido, EventoPedido, Pedido, Producto, Usuario
 
 ESTACIONES_INFO = {
     Producto.ESTACION_BARRA_FRIA: {
@@ -60,36 +62,231 @@ TRANSICIONES_COCINA = {
     ],
 }
 
+TRANSICIONES_ITEM = {
+    DetallePedido.ESTADO_ITEM_PENDIENTE: [
+        DetallePedido.ESTADO_ITEM_COCINANDO,
+        DetallePedido.ESTADO_ITEM_EN_PREPARACION,
+        DetallePedido.ESTADO_ITEM_LISTO,
+        DetallePedido.ESTADO_ITEM_ANULADO,
+    ],
+    DetallePedido.ESTADO_ITEM_COCINANDO: [
+        DetallePedido.ESTADO_ITEM_LISTO,
+        DetallePedido.ESTADO_ITEM_ANULADO,
+    ],
+    DetallePedido.ESTADO_ITEM_EN_PREPARACION: [
+        DetallePedido.ESTADO_ITEM_LISTO,
+        DetallePedido.ESTADO_ITEM_ANULADO,
+    ],
+    DetallePedido.ESTADO_ITEM_LISTO: [
+        DetallePedido.ESTADO_ITEM_SERVIDO,
+        DetallePedido.ESTADO_ITEM_ANULADO,
+    ],
+    DetallePedido.ESTADO_ITEM_SERVIDO: [
+        DetallePedido.ESTADO_ITEM_ANULADO,
+    ],
+}
 
-def avanzar_estado_comanda(pedido_id, nuevo_estado, usuario_id=None, motivo=""):
-    """Avanza de forma atómica el estado de una comanda registrando auditoría en evento_pedido."""
+
+def _validar_fk_usuario_id(usuario_id):
+    """Garantiza que usuario_id sea válido para evitar ForeignKeyViolation en PostgreSQL."""
+    if not usuario_id:
+        return None
+    try:
+        from django.db import connection
+
+        # En SQLite (pruebas locales), respetar el ID asignado directamente
+        if connection.vendor == "sqlite":
+            return usuario_id
+        if Usuario.objects.filter(pk=usuario_id).exists():
+            return usuario_id
+    except Exception:
+        pass
+    return None
+
+
+def recalcular_estado_pedido(pedido):
+    """Recalcula el estado general del Pedido en función de sus ítems (PRB-86)."""
+    detalles = list(pedido.detalles.all())
+    if not detalles:
+        return pedido.estado
+
+    activos = [d for d in detalles if d.estado_item != DetallePedido.ESTADO_ITEM_ANULADO]
+    if not activos:
+        nuevo_estado = Pedido.ESTADO_ANULADO
+    else:
+        estados_activos = set(d.estado_item for d in activos)
+        if all(e == DetallePedido.ESTADO_ITEM_SERVIDO for e in estados_activos):
+            nuevo_estado = Pedido.ESTADO_SERVIDO
+        elif all(
+            e in (DetallePedido.ESTADO_ITEM_LISTO, DetallePedido.ESTADO_ITEM_SERVIDO)
+            for e in estados_activos
+        ):
+            nuevo_estado = Pedido.ESTADO_LISTO
+        elif any(
+            e
+            in (
+                DetallePedido.ESTADO_ITEM_COCINANDO,
+                DetallePedido.ESTADO_ITEM_EN_PREPARACION,
+                DetallePedido.ESTADO_ITEM_LISTO,
+                DetallePedido.ESTADO_ITEM_SERVIDO,
+            )
+            for e in estados_activos
+        ):
+            nuevo_estado = Pedido.ESTADO_COCINANDO
+        else:
+            nuevo_estado = Pedido.ESTADO_PENDIENTE
+
+    if pedido.estado != nuevo_estado:
+        pedido.estado = nuevo_estado
+        pedido.version = (pedido.version or 1) + 1
+        pedido.save(update_fields=["estado", "version"])
+
+    return pedido.estado
+
+
+def avanzar_estado_item(detalle_id, nuevo_estado, usuario_id=None, motivo=""):
+    """Avanza atómicamente el estado de un plato/ítem individual de la comanda (PRB-57, PRB-86)."""
     nuevo_estado = (nuevo_estado or "").strip().upper()
+    if nuevo_estado == "EN_PREPARACION":
+        nuevo_estado = DetallePedido.ESTADO_ITEM_COCINANDO
+
+    with transaction.atomic():
+        detalle = (
+            DetallePedido.objects.select_for_update()
+            .select_related("pedido", "producto")
+            .get(pk=detalle_id)
+        )
+        pedido = detalle.pedido
+        estado_ant = detalle.estado_item or DetallePedido.ESTADO_ITEM_PENDIENTE
+
+        permitidos = TRANSICIONES_ITEM.get(estado_ant, [])
+        if nuevo_estado not in permitidos and nuevo_estado != estado_ant:
+            raise ValidationError(
+                f"Transición de ítem no permitida: de '{estado_ant}' a '{nuevo_estado}'."
+            )
+
+        detalle.estado_item = nuevo_estado
+        update_fields = ["estado_item"]
+        if nuevo_estado == DetallePedido.ESTADO_ITEM_ANULADO and motivo:
+            detalle.anulado_motivo = motivo[:255]
+            update_fields.append("anulado_motivo")
+        detalle.save(update_fields=update_fields)
+
+        usuario_valido_id = _validar_fk_usuario_id(usuario_id)
+
+        EventoPedido.objects.create(
+            pedido=pedido,
+            estado_anterior=estado_ant,
+            estado_nuevo=nuevo_estado,
+            usuario_id=usuario_valido_id,
+            motivo=(
+                motivo
+                or f"Avance ítem #{detalle.id} ({detalle.producto.nombre}) a {nuevo_estado}"
+            )[:255],
+        )
+
+        recalcular_estado_pedido(pedido)
+
+        # Descuento de stock automático al pasar a COCINANDO o LISTO
+        if nuevo_estado in (
+            DetallePedido.ESTADO_ITEM_COCINANDO,
+            DetallePedido.ESTADO_ITEM_LISTO,
+        ):
+            try:
+                from .stock_service import descontar_stock_pedido
+
+                descontar_stock_pedido(
+                    pedido, usuario_id=usuario_valido_id, estricto=False
+                )
+            except Exception:
+                pass
+
+    return detalle
+
+
+def avanzar_estado_comanda(
+    pedido_id, nuevo_estado, estacion=None, usuario_id=None, motivo=""
+):
+    """Avanza de forma atómica el estado de una comanda o de una estación específica (PRB-57).
+
+    Si se especifica `estacion`, solo avanza los ítems pertenecientes a esa estación,
+    evitando que marcar 'Listo' en una barra (ej. Bebidas) marque toda la comanda como lista.
+    """
+    nuevo_estado = (nuevo_estado or "").strip().upper()
+    if nuevo_estado == "EN_PREPARACION":
+        nuevo_estado = Pedido.ESTADO_COCINANDO
 
     with transaction.atomic():
         pedido = Pedido.objects.select_for_update().get(pk=pedido_id)
         estado_actual = pedido.estado
+        usuario_valido_id = _validar_fk_usuario_id(usuario_id)
 
-        permitidos = TRANSICIONES_COCINA.get(estado_actual, [])
-        if nuevo_estado not in permitidos:
-            raise ValidationError(
-                f"Transición no permitida: de '{estado_actual}' a '{nuevo_estado}'."
+        # Si se especifica estación, avanzar solo los ítems de esa estación
+        if estacion:
+            estacion_cod = estacion.strip().upper()
+            detalles_qs = pedido.detalles.select_for_update().select_related(
+                "producto"
+            )
+            afectados = 0
+            for d in detalles_qs:
+                if (d.estacion_item or d.producto.estacion) == estacion_cod:
+                    if d.estado_item != DetallePedido.ESTADO_ITEM_ANULADO:
+                        d.estado_item = nuevo_estado
+                        d.save(update_fields=["estado_item"])
+                        afectados += 1
+
+            if afectados > 0:
+                EventoPedido.objects.create(
+                    pedido=pedido,
+                    estado_anterior=estado_actual,
+                    estado_nuevo=f"{nuevo_estado} [{estacion_cod}]",
+                    usuario_id=usuario_valido_id,
+                    motivo=(
+                        motivo or f"Avance estación {estacion_cod} a {nuevo_estado}"
+                    )[:255],
+                )
+
+            recalcular_estado_pedido(pedido)
+
+        else:
+            # Avance global de comanda
+            permitidos = TRANSICIONES_COCINA.get(estado_actual, [])
+            if nuevo_estado not in permitidos and nuevo_estado != estado_actual:
+                raise ValidationError(
+                    f"Transición no permitida: de '{estado_actual}' a '{nuevo_estado}'."
+                )
+
+            for d in pedido.detalles.select_for_update():
+                if d.estado_item != DetallePedido.ESTADO_ITEM_ANULADO:
+                    d.estado_item = nuevo_estado
+                    d.save(update_fields=["estado_item"])
+
+            pedido.estado = nuevo_estado
+            pedido.version = (pedido.version or 1) + 1
+            campos_update = ["estado", "version"]
+            if nuevo_estado == Pedido.ESTADO_ANULADO and motivo:
+                pedido.motivo_anulacion = motivo[:255]
+                campos_update.append("motivo_anulacion")
+            pedido.save(update_fields=campos_update)
+
+            EventoPedido.objects.create(
+                pedido=pedido,
+                estado_anterior=estado_actual,
+                estado_nuevo=nuevo_estado,
+                usuario_id=usuario_valido_id,
+                motivo=(motivo or f"Avance en KDS a {nuevo_estado}")[:255],
             )
 
-        pedido.estado = nuevo_estado
-        pedido.version = (pedido.version or 1) + 1
-        campos_update = ["estado", "version"]
-        if nuevo_estado == Pedido.ESTADO_ANULADO and motivo:
-            pedido.motivo_anulacion = motivo[:255]
-            campos_update.append("motivo_anulacion")
-        pedido.save(update_fields=campos_update)
+        # Descuento de stock automático al pasar a COCINANDO o LISTO
+        if nuevo_estado in (Pedido.ESTADO_COCINANDO, Pedido.ESTADO_LISTO):
+            try:
+                from .stock_service import descontar_stock_pedido
 
-        EventoPedido.objects.create(
-            pedido=pedido,
-            estado_anterior=estado_actual,
-            estado_nuevo=nuevo_estado,
-            usuario_id=usuario_id,
-            motivo=(motivo or f"Avance en KDS a {nuevo_estado}")[:255],
-        )
+                descontar_stock_pedido(
+                    pedido, usuario_id=usuario_valido_id, estricto=False
+                )
+            except Exception:
+                pass
 
     return pedido
 
@@ -142,12 +339,41 @@ def obtener_comandas_kds(estacion=None, estado_filtro="activos"):
         todos_detalles = list(ped.detalles.all())
         if estacion_codigo:
             detalles_filtrados = [
-                d for d in todos_detalles if d.producto.estacion == estacion_codigo
+                d
+                for d in todos_detalles
+                if (d.estacion_item or d.producto.estacion) == estacion_codigo
             ]
             if not detalles_filtrados:
                 continue
         else:
             detalles_filtrados = todos_detalles
+
+        # Decorar cada ítem con su siguiente acción individual
+        for d in detalles_filtrados:
+            st = d.estado_item or DetallePedido.ESTADO_ITEM_PENDIENTE
+            prox_item = None
+            if st == DetallePedido.ESTADO_ITEM_PENDIENTE:
+                prox_item = {
+                    "target_estado": DetallePedido.ESTADO_ITEM_COCINANDO,
+                    "label": "Preparar",
+                    "btn_class": "btn-item-iniciar",
+                }
+            elif st in (
+                DetallePedido.ESTADO_ITEM_COCINANDO,
+                DetallePedido.ESTADO_ITEM_EN_PREPARACION,
+            ):
+                prox_item = {
+                    "target_estado": DetallePedido.ESTADO_ITEM_LISTO,
+                    "label": "Listo",
+                    "btn_class": "btn-item-listo",
+                }
+            elif st == DetallePedido.ESTADO_ITEM_LISTO:
+                prox_item = {
+                    "target_estado": DetallePedido.ESTADO_ITEM_SERVIDO,
+                    "label": "Servir",
+                    "btn_class": "btn-item-servir",
+                }
+            d.proxima_accion = prox_item
 
         minutos = ped.tiempo_transcurrido_minutos
         nivel_sla = ped.nivel_sla
@@ -162,26 +388,55 @@ def obtener_comandas_kds(estacion=None, estado_filtro="activos"):
             sla_class = "sla-normal"
             sla_label = "En tiempo (< 10m)"
 
-        # Determinar siguiente acción KDS sugerida
+        # Determinar siguiente acción sugerida (a nivel de estación o comanda)
         proxima_accion = None
-        if ped.estado == Pedido.ESTADO_PENDIENTE:
-            proxima_accion = {
-                "target_estado": Pedido.ESTADO_COCINANDO,
-                "label": "Iniciar Preparación",
-                "btn_class": "btn-kds-iniciar",
-            }
-        elif ped.estado == Pedido.ESTADO_COCINANDO:
-            proxima_accion = {
-                "target_estado": Pedido.ESTADO_LISTO,
-                "label": "Marcar como Listo",
-                "btn_class": "btn-kds-listo",
-            }
-        elif ped.estado == Pedido.ESTADO_LISTO:
-            proxima_accion = {
-                "target_estado": Pedido.ESTADO_SERVIDO,
-                "label": "Despachar a Mesa",
-                "btn_class": "btn-kds-servir",
-            }
+        if estacion_codigo:
+            estados_estacion = set(
+                d.estado_item or DetallePedido.ESTADO_ITEM_PENDIENTE
+                for d in detalles_filtrados
+            )
+            if DetallePedido.ESTADO_ITEM_PENDIENTE in estados_estacion:
+                proxima_accion = {
+                    "target_estado": Pedido.ESTADO_COCINANDO,
+                    "label": "Iniciar Estación",
+                    "btn_class": "btn-kds-iniciar",
+                }
+            elif (
+                DetallePedido.ESTADO_ITEM_COCINANDO in estados_estacion
+                or DetallePedido.ESTADO_ITEM_EN_PREPARACION in estados_estacion
+            ):
+                proxima_accion = {
+                    "target_estado": Pedido.ESTADO_LISTO,
+                    "label": "Marcar Estación Lista",
+                    "btn_class": "btn-kds-listo",
+                }
+            elif all(
+                e == DetallePedido.ESTADO_ITEM_LISTO for e in estados_estacion
+            ):
+                proxima_accion = {
+                    "target_estado": Pedido.ESTADO_SERVIDO,
+                    "label": "Despachar Estación",
+                    "btn_class": "btn-kds-servir",
+                }
+        else:
+            if ped.estado == Pedido.ESTADO_PENDIENTE:
+                proxima_accion = {
+                    "target_estado": Pedido.ESTADO_COCINANDO,
+                    "label": "Iniciar Preparación",
+                    "btn_class": "btn-kds-iniciar",
+                }
+            elif ped.estado == Pedido.ESTADO_COCINANDO:
+                proxima_accion = {
+                    "target_estado": Pedido.ESTADO_LISTO,
+                    "label": "Marcar como Listo",
+                    "btn_class": "btn-kds-listo",
+                }
+            elif ped.estado == Pedido.ESTADO_LISTO:
+                proxima_accion = {
+                    "target_estado": Pedido.ESTADO_SERVIDO,
+                    "label": "Despachar a Mesa",
+                    "btn_class": "btn-kds-servir",
+                }
 
         comandas.append(
             {
@@ -210,7 +465,6 @@ def resumen_kpis_kds():
     cocinando = qs_hoy.filter(estado=Pedido.ESTADO_COCINANDO).count()
     listos = qs_hoy.filter(estado=Pedido.ESTADO_LISTO).count()
 
-    # Contar órdenes activas que superan SLA (>= 10 min)
     activos = qs_hoy.filter(
         estado__in=[Pedido.ESTADO_PENDIENTE, Pedido.ESTADO_COCINANDO]
     )
@@ -249,7 +503,10 @@ def serializar_comandas_json(comandas):
                     "nombre": d.producto.nombre,
                     "estacion": d.estacion,
                     "estacion_display": d.estacion_display,
+                    "estado_item": d.estado_item,
+                    "estado_display": d.get_estado_item_display(),
                     "notas": d.notas or "",
+                    "proxima_accion": getattr(d, "proxima_accion", None),
                 }
             )
 

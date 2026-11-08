@@ -101,6 +101,11 @@ urlpatterns = [
         name="kds_avanzar_pedido",
     ),
     path(
+        "cocina/items/<int:detalle_id>/avanzar/",
+        views.kds_avanzar_item,
+        name="kds_avanzar_item",
+    ),
+    path(
         "cocina/api/comandas/",
         views.kds_api_comandas,
         name="kds_api_comandas",

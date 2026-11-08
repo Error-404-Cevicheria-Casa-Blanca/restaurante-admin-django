@@ -65,8 +65,14 @@ CREATE TABLE detalle_pedido (
     cantidad INT NOT NULL CHECK (cantidad >= 1),
     notas VARCHAR(255),
     modificadores_json TEXT,
-    subtotal NUMERIC(10,2) NOT NULL CHECK (subtotal >= 0)
+    subtotal NUMERIC(10,2) NOT NULL CHECK (subtotal >= 0),
+    estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+        CHECK (estado_item IN ('PENDIENTE','COCINANDO','EN_PREPARACION','LISTO','SERVIDO','ANULADO')),
+    estacion VARCHAR(30) NOT NULL DEFAULT 'COCINA_CALIENTE',
+    anulado_motivo VARCHAR(255)
 );
+
+CREATE INDEX idx_detalle_estado_estacion ON detalle_pedido(estado_item, estacion);
 
 -- Índices estratégicos para rendimiento y Foreign Keys
 CREATE INDEX idx_pedido_mesa_estado ON pedido(mesa_id, estado);

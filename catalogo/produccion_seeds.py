@@ -34,35 +34,30 @@ USUARIOS_PRODUCCION = (
         "rol": "ADMIN",
         "clave_hash": "$2b$10$DKEHgzLn6shfGj/CuZTVR.UM5yPWvDNcG3xmqm1fvHrvzq6eEMUnW",
         "pin_hash": "$2b$10$nCEbqb1gjv2B9gH3BjYxhuYak2QeZcowFaNx1ecAo1ObCSuSu0og2",
-        "pin_referencia": "1040",
     },
     {
         "username": "cajero_01",
         "rol": "CAJERO",
         "clave_hash": "$2b$10$q4uxzvPmonj4yAazKZTf9uRQzHhaOfREQBXIRzt0OZO.hlfAPrd/K",
         "pin_hash": "$2b$10$2am1ckanDtp87GRVfMnI7.Cs5rzqp1UxnL0ZDbxVyDF1SYpn2BNRi",
-        "pin_referencia": "2040",
     },
     {
         "username": "mozo_01",
         "rol": "MOZO",
         "clave_hash": "$2b$10$xPju1s2hMHa4jMUhW.vzCOT8Jxj7JeLs42H6DA73biyIBZXhBIXXO",
         "pin_hash": "$2b$10$GfpUH9Hzg3yIwfN81Rb5bOBBlsFwpWU/TjBIkDZOZCyhWDPGYj0F.",
-        "pin_referencia": "3011",
     },
     {
         "username": "mozo_02",
         "rol": "MOZO",
         "clave_hash": "$2b$10$UdxWr.j7CveWqsLii4ohOeO4WJJVJRv.GHRvsier6SRf8aCZoc2la",
         "pin_hash": "$2b$10$/AzYAZN9wyMUOQO.jiaCmOa.LJFVNw52q.eBLel.5gmxj0x2i4suC",
-        "pin_referencia": "3022",
     },
     {
         "username": "cocinero_01",
         "rol": "COCINERO",
         "clave_hash": "$2b$10$4LKw5u8HgC/DRp0t6It8beUPuY9PO/hUkphPwcuC16/qkMdo0TAAC",
         "pin_hash": "$2b$10$PLWdrtnbLZwZPumxGKSVLOPWIL.9aGcri2VPaO9ztWRlFyxpZ4sd2",
-        "pin_referencia": "4010",
     },
 )
 

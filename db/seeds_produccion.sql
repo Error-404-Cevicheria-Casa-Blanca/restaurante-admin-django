@@ -36,12 +36,7 @@ SET clave_hash = '$2b$10$DKEHgzLn6shfGj/CuZTVR.UM5yPWvDNcG3xmqm1fvHrvzq6eEMUnW',
 WHERE username = 'admin_test'
   AND clave_hash = '$2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S';
 
--- Usuarios operativos reales con BCrypt cost 10 tanto en clave_hash como en pin_hash (4 dígitos):
---   admin_casablanca (ADMIN)    -> PIN inicial: 1040
---   cajero_01        (CAJERO)   -> PIN inicial: 2040
---   mozo_01          (MOZO P1)  -> PIN inicial: 3011
---   mozo_02          (MOZO P2)  -> PIN inicial: 3022
---   cocinero_01      (COCINERO) -> PIN inicial: 4010
+-- Usuarios operativos reales con BCrypt cost 10 tanto en clave_hash como en pin_hash.
 -- Nota: Si el administrador ya rotó manualmente la contraseña o el PIN en producción
 -- (distinto del hash débil de seed.sql), el DO UPDATE respeta la rotación existente.
 

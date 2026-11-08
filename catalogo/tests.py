@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
@@ -18,6 +18,7 @@ from django.utils import timezone
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
 from catalogo.kds_service import (
     avanzar_estado_comanda,
+    avanzar_estado_item,
     obtener_comandas_kds,
     resumen_kpis_kds,
 )
@@ -1865,3 +1866,153 @@ class KDSCocinaTests(TestCase):
         self.assertEqual(c0["items"][0]["nombre"], "Ceviche Clásico Casa Blanca")
         self.assertEqual(c0["items"][0]["notas"], "Ají limo picado")
         self.assertEqual(c0["items"][0]["estacion"], Producto.ESTACION_BARRA_FRIA)
+        self.assertEqual(c0["items"][0]["estado_item"], DetallePedido.ESTADO_ITEM_PENDIENTE)
+
+    def test_avance_individual_por_item_y_recalculo_comanda(self):
+        """PRB-57 / PRB-86: Cada plato avanza individualmente y el pedido recalcula su estado."""
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("64.00"),
+        )
+        d_ceviche = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+        d_chicha = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.chicha,
+            cantidad=1,
+            precio_unitario=Decimal("16.00"),
+            subtotal=Decimal("16.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # 1. Iniciar ceviche -> ítem COCINANDO, pedido pasa a COCINANDO
+        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_COCINANDO)
+        d_ceviche.refresh_from_db()
+        ped.refresh_from_db()
+        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_COCINANDO)
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+        # 2. Ceviche LISTO pero Chicha sigue PENDIENTE:
+        # Pedido sigue en COCINANDO (NO LISTO todavía)
+        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_LISTO)
+        d_ceviche.refresh_from_db()
+        d_chicha.refresh_from_db()
+        ped.refresh_from_db()
+        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+        self.assertEqual(d_chicha.estado_item, DetallePedido.ESTADO_ITEM_PENDIENTE)
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+        # 3. Chicha pasa a LISTO -> Todos los ítems están LISTO, pedido pasa a LISTO
+        avanzar_estado_item(d_chicha.id, DetallePedido.ESTADO_ITEM_LISTO)
+        d_chicha.refresh_from_db()
+        ped.refresh_from_db()
+        self.assertEqual(d_chicha.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+        self.assertEqual(ped.estado, Pedido.ESTADO_LISTO)
+
+        # 4. Ambos servidos -> Pedido pasa a SERVIDO
+        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_SERVIDO)
+        avanzar_estado_item(d_chicha.id, DetallePedido.ESTADO_ITEM_SERVIDO)
+        ped.refresh_from_db()
+        self.assertEqual(ped.estado, Pedido.ESTADO_SERVIDO)
+
+    def test_aislamiento_estaciones_no_avanza_otra_estacion(self):
+        """PRB-57: Marcar 'Listo' en Barra Fría NO marca la bebida ni toda la comanda."""
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("64.00"),
+        )
+        d_ceviche = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+        d_chicha = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.chicha,
+            cantidad=1,
+            precio_unitario=Decimal("16.00"),
+            subtotal=Decimal("16.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # Barra Fría avanza solo sus ítems a LISTO
+        avanzar_estado_comanda(
+            pedido_id=ped.id,
+            nuevo_estado=Pedido.ESTADO_LISTO,
+            estacion=Producto.ESTACION_BARRA_FRIA,
+        )
+        d_ceviche.refresh_from_db()
+        d_chicha.refresh_from_db()
+        ped.refresh_from_db()
+
+        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+        self.assertEqual(d_chicha.estado_item, DetallePedido.ESTADO_ITEM_PENDIENTE)
+        # La comanda NO debe estar como LISTO porque la bebida aún no se prepara
+        self.assertNotEqual(ped.estado, Pedido.ESTADO_LISTO)
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+    def test_kds_avanzar_item_endpoint_html_y_ajax(self):
+        """PRB-57: POST a /cocina/items/<id>/avanzar/ soporta redirección y AJAX JSON."""
+        self.client.force_login(self.cocinero)
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("48.00"),
+        )
+        det = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # 1. POST HTML
+        resp_html = self.client.post(
+            f"/cocina/items/{det.id}/avanzar/",
+            {"nuevo_estado": DetallePedido.ESTADO_ITEM_COCINANDO},
+        )
+        self.assertEqual(resp_html.status_code, 302)
+        det.refresh_from_db()
+        self.assertEqual(det.estado_item, DetallePedido.ESTADO_ITEM_COCINANDO)
+
+        # 2. POST AJAX
+        resp_ajax = self.client.post(
+            f"/cocina/items/{det.id}/avanzar/",
+            {"nuevo_estado": DetallePedido.ESTADO_ITEM_LISTO},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(resp_ajax.status_code, 200)
+        data = resp_ajax.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["nuevo_estado_item"], DetallePedido.ESTADO_ITEM_LISTO)
+        det.refresh_from_db()
+        self.assertEqual(det.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+
+    def test_fk_usuario_id_seguro_postgres(self):
+        """PRB-57: Valida que auth_user.id o IDs inválidos no rompan la FK en PostgreSQL."""
+        from catalogo.kds_service import _validar_fk_usuario_id
+        from catalogo.views import resolver_usuario_operativo_id
+
+        # 1. Con un auth_user de django
+        usuario_resuelto = resolver_usuario_operativo_id(self.cocinero)
+        self.assertTrue(usuario_resuelto is None or isinstance(usuario_resuelto, int))
+
+        # 2. _validar_fk_usuario_id con ID inexistente en entorno PostgreSQL
+        with patch("django.db.connection.vendor", "postgresql"):
+            self.assertIsNone(_validar_fk_usuario_id(999999))

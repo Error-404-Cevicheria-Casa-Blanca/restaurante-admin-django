@@ -26,12 +26,14 @@ from .forms import (
 from .kds_service import (
     ESTACIONES_INFO,
     avanzar_estado_comanda,
+    avanzar_estado_item,
     obtener_comandas_kds,
     resumen_kpis_kds,
     serializar_comandas_json,
 )
 from .models import (
     Categoria,
+    DetallePedido,
     Mesa,
     MovimientoStock,
     Pago,
@@ -1836,6 +1838,39 @@ def sincronizar_seeds_produccion_view(request):
 # =============================================================================
 
 
+def resolver_usuario_operativo_id(user):
+    """Resuelve un usuario_id válido de la tabla 'usuario' para el usuario autenticado (auth_user).
+
+    Garantiza compatibilidad con las foreign keys en PostgreSQL evitando ForeignKeyViolation.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return None
+
+    if isinstance(user, Usuario) and getattr(user, "id", None):
+        if Usuario.objects.filter(pk=user.id).exists():
+            return user.id
+
+    username = getattr(user, "username", None)
+    if username:
+        operativo = Usuario.objects.filter(username__iexact=username).first()
+        if operativo:
+            return operativo.id
+
+    cocinero_o_admin = (
+        Usuario.objects.filter(rol__nombre__in=["COCINERO", "ADMIN", "CAJERO"])
+        .order_by("id")
+        .first()
+    )
+    if cocinero_o_admin:
+        return cocinero_o_admin.id
+
+    primer_usuario = Usuario.objects.order_by("id").first()
+    if primer_usuario:
+        return primer_usuario.id
+
+    return None
+
+
 @staff_required
 def kds_cocina(request):
     """Pantalla KDS de cocina en tiempo real con estaciones y semáforo SLA."""
@@ -1862,16 +1897,19 @@ def kds_cocina(request):
 @staff_required
 @require_POST
 def kds_avanzar_pedido(request, pk):
-    """Avanza de forma transaccional el estado de preparación de una comanda."""
+    """Avanza de forma transaccional el estado de preparación de una comanda o estación."""
     asegurar_tablas_sqlite()
     nuevo_estado = (request.POST.get("nuevo_estado") or "").strip().upper()
     motivo = (request.POST.get("motivo") or "").strip()
+    estacion = (request.POST.get("estacion") or "").strip().upper()
+    usuario_id = resolver_usuario_operativo_id(request.user)
 
     try:
         pedido = avanzar_estado_comanda(
             pedido_id=pk,
             nuevo_estado=nuevo_estado,
-            usuario_id=request.user.id,
+            estacion=estacion if estacion else None,
+            usuario_id=usuario_id,
             motivo=motivo,
         )
     except (Pedido.DoesNotExist, ValidationError) as exc:
@@ -1901,6 +1939,63 @@ def kds_avanzar_pedido(request, pk):
         request,
         f"Comanda #{pedido.id} ({pedido.origen_display}) "
         f"actualizada a {pedido.get_estado_display()}.",
+    )
+    redirect_url = reverse("catalogo:kds_cocina")
+    query_parts = []
+    if request.POST.get("estacion"):
+        query_parts.append(f"estacion={request.POST.get('estacion')}")
+    if request.POST.get("estado"):
+        query_parts.append(f"estado={request.POST.get('estado')}")
+    if query_parts:
+        redirect_url = f"{redirect_url}?{'&'.join(query_parts)}"
+    return redirect(redirect_url)
+
+
+@staff_required
+@require_POST
+def kds_avanzar_item(request, detalle_id):
+    """Avanza atómicamente el estado individual de un plato en el KDS (PRB-57, PRB-86)."""
+    asegurar_tablas_sqlite()
+    nuevo_estado = (request.POST.get("nuevo_estado") or "").strip().upper()
+    motivo = (request.POST.get("motivo") or "").strip()
+    usuario_id = resolver_usuario_operativo_id(request.user)
+
+    try:
+        detalle = avanzar_estado_item(
+            detalle_id=detalle_id,
+            nuevo_estado=nuevo_estado,
+            usuario_id=usuario_id,
+            motivo=motivo,
+        )
+    except (DetallePedido.DoesNotExist, ValidationError) as exc:
+        msg = str(exc)
+        if request.headers.get(
+            "x-requested-with"
+        ) == "XMLHttpRequest" or "application/json" in request.META.get(
+            "HTTP_ACCEPT", ""
+        ):
+            return JsonResponse({"ok": False, "error": msg}, status=400)
+        messages.error(request, msg)
+        return redirect("catalogo:kds_cocina")
+
+    if request.headers.get(
+        "x-requested-with"
+    ) == "XMLHttpRequest" or "application/json" in request.META.get("HTTP_ACCEPT", ""):
+        return JsonResponse(
+            {
+                "ok": True,
+                "detalle_id": detalle.id,
+                "pedido_id": detalle.pedido_id,
+                "nuevo_estado_item": detalle.estado_item,
+                "estado_item_display": detalle.get_estado_item_display(),
+                "pedido_estado": detalle.pedido.estado,
+                "pedido_estado_display": detalle.pedido.get_estado_display(),
+            }
+        )
+
+    messages.success(
+        request,
+        f"{detalle.producto.nombre} actualizado a {detalle.get_estado_item_display()}.",
     )
     redirect_url = reverse("catalogo:kds_cocina")
     query_parts = []

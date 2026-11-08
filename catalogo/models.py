@@ -511,11 +511,27 @@ class Pago(models.Model):
 
 
 class DetallePedido(models.Model):
-    """Ítem o línea de plato dentro de una comanda (PRB-59).
+    """Ítem o línea de plato dentro de una comanda con estado individual (PRB-57, PRB-59, PRB-86).
 
     Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'detalle_pedido' es creada y
     gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
     """
+
+    ESTADO_ITEM_PENDIENTE = "PENDIENTE"
+    ESTADO_ITEM_COCINANDO = "COCINANDO"
+    ESTADO_ITEM_EN_PREPARACION = "EN_PREPARACION"
+    ESTADO_ITEM_LISTO = "LISTO"
+    ESTADO_ITEM_SERVIDO = "SERVIDO"
+    ESTADO_ITEM_ANULADO = "ANULADO"
+
+    ESTADOS_ITEM_CHOICES = [
+        (ESTADO_ITEM_PENDIENTE, "Pendiente"),
+        (ESTADO_ITEM_COCINANDO, "En Cocina"),
+        (ESTADO_ITEM_EN_PREPARACION, "En Preparación"),
+        (ESTADO_ITEM_LISTO, "Listo"),
+        (ESTADO_ITEM_SERVIDO, "Servido"),
+        (ESTADO_ITEM_ANULADO, "Anulado"),
+    ]
 
     pedido = models.ForeignKey(
         Pedido,
@@ -553,6 +569,27 @@ class DetallePedido(models.Model):
         validators=[MinValueValidator(Decimal("0.00"))],
         verbose_name="Subtotal (S/)",
     )
+    estado_item = models.CharField(
+        max_length=20,
+        choices=ESTADOS_ITEM_CHOICES,
+        default=ESTADO_ITEM_PENDIENTE,
+        db_column="estado_item",
+        verbose_name="Estado del Ítem",
+    )
+    estacion_item = models.CharField(
+        max_length=30,
+        null=True,
+        blank=True,
+        db_column="estacion",
+        verbose_name="Estación Asignada",
+    )
+    anulado_motivo = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_column="anulado_motivo",
+        verbose_name="Motivo de Anulación",
+    )
 
     class Meta:
         db_table = "detalle_pedido"
@@ -562,9 +599,22 @@ class DetallePedido(models.Model):
         ordering = ["id"]
 
     @property
+    def estado(self):
+        """Alias para interoperabilidad con contratos API y serializadores."""
+        return self.estado_item
+
+    @estado.setter
+    def estado(self, valor):
+        self.estado_item = valor
+
+    @property
     def estacion(self):
         """Estación de cocina correspondiente a este ítem."""
-        return self.producto.estacion
+        return self.estacion_item or self.producto.estacion
+
+    @estacion.setter
+    def estacion(self, valor):
+        self.estacion_item = valor
 
     @property
     def estacion_display(self):
@@ -572,7 +622,10 @@ class DetallePedido(models.Model):
         return self.producto.estacion_display
 
     def __str__(self):
-        return f"{self.cantidad}x {self.producto.nombre} (Pedido #{self.pedido_id})"
+        return (
+            f"{self.cantidad}x {self.producto.nombre} "
+            f"[{self.estado_item}] (Pedido #{self.pedido_id})"
+        )
 
 
 class MovimientoStock(models.Model):

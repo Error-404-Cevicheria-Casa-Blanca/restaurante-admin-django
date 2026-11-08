@@ -131,17 +131,35 @@
 
           <div class="kds-items-list">
             {% for det in c.detalles %}
-            <div class="kds-item-row">
-              <span class="kds-item-qty">{{ det.cantidad }}</span>
-              <div class="kds-item-info">
-                <div class="kds-item-name">{{ det.producto.nombre }}</div>
-                {% if det.notas %}
-                <div class="kds-item-notes">Nota: {{ det.notas }}</div>
+            <div class="kds-item-row" data-detalle-id="{{ det.id }}" style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 0;border-bottom:1px solid #f1f5f9;">
+              <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+                <span class="kds-item-qty" style="font-weight:700;background:#e2e8f0;border-radius:4px;padding:2px 6px;font-size:12px;flex-shrink:0;">{{ det.cantidad }}</span>
+                <div class="kds-item-info" style="overflow:hidden;text-overflow:ellipsis;">
+                  <div class="kds-item-name" style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ det.producto.nombre }}</div>
+                  {% if det.notas %}
+                  <div class="kds-item-notes" style="font-size:11px;color:#64748b;font-style:italic;">Nota: {{ det.notas }}</div>
+                  {% endif %}
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                <span class="badge {{ det.producto.estacion|lower }}" style="font-size:10px;padding:2px 6px;">
+                  {{ det.estacion_display }}
+                </span>
+                <span class="badge {% if det.estado_item == 'PENDIENTE' %}badge-warning{% elif det.estado_item == 'COCINANDO' or det.estado_item == 'EN_PREPARACION' %}badge-primary{% elif det.estado_item == 'LISTO' %}badge-success{% elif det.estado_item == 'SERVIDO' %}badge-outline{% else %}badge-danger{% endif %}" style="font-size:10px;padding:2px 6px;">
+                  {{ det.get_estado_item_display }}
+                </span>
+                {% if det.proxima_accion %}
+                <form method="post" action="{% url 'catalogo:kds_avanzar_item' det.id %}" class="kds-item-form" style="margin:0;display:inline;">
+                  {% csrf_token %}
+                  <input type="hidden" name="nuevo_estado" value="{{ det.proxima_accion.target_estado }}">
+                  <input type="hidden" name="estacion" value="{{ estacion_activa }}">
+                  <input type="hidden" name="estado" value="{{ estado_activo }}">
+                  <button type="submit" class="btn btn-sm btn-outline {{ det.proxima_accion.btn_class }}" style="padding:2px 7px;font-size:11px;font-weight:600;line-height:1.2;" title="Avanzar a {{ det.proxima_accion.label }}">
+                    {{ det.proxima_accion.label }}
+                  </button>
+                </form>
                 {% endif %}
               </div>
-              <span class="badge {{ det.producto.estacion|lower }}" style="font-size:10px;padding:2px 6px;">
-                {{ det.estacion_display }}
-              </span>
             </div>
             {% endfor %}
           </div>
@@ -155,7 +173,7 @@
             <input type="hidden" name="estacion" value="{{ estacion_activa }}">
             <input type="hidden" name="estado" value="{{ estado_activo }}">
             <button type="submit" class="btn-kds-action {{ c.proxima_accion.btn_class }}">
-              {{ c.proxima_accion.label }}
+              {% if estacion_activa %}Avanzar {{ estacion_activa|title }}: {% endif %}{{ c.proxima_accion.label }}
             </button>
           </form>
         </footer>
@@ -244,6 +262,36 @@
     }
   }
   setInterval(sincronizarKds, 6000);
+
+  // 3. Manejo interactivo AJAX de botones de avance (ítems y comandas)
+  document.addEventListener("submit", async function(e) {
+    const form = e.target.closest(".kds-item-form, .kds-action-form");
+    if (!form) return;
+    e.preventDefault();
+    const btn = form.querySelector("button[type='submit']");
+    if (btn) btn.disabled = true;
+
+    try {
+      const resp = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json"
+        },
+        credentials: "same-origin"
+      });
+      if (resp.ok) {
+        // Sincronizar de inmediato el estado
+        await sincronizarKds();
+        window.location.reload();
+      } else {
+        form.submit();
+      }
+    } catch (err) {
+      form.submit();
+    }
+  });
 })();
 </script>
 {% endblock %}
