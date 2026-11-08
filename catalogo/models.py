@@ -42,6 +42,18 @@ class Producto(models.Model):
     diario según pesca del día (PE-19).
     """
 
+    ESTACION_BARRA_FRIA = "BARRA_FRIA"
+    ESTACION_COCINA_CALIENTE = "COCINA_CALIENTE"
+    ESTACION_BEBIDAS = "BEBIDAS"
+    ESTACION_POSTRES = "POSTRES"
+
+    ESTACIONES_CHOICES = [
+        (ESTACION_BARRA_FRIA, "Barra Fría (Cevichería)"),
+        (ESTACION_COCINA_CALIENTE, "Cocina Caliente"),
+        (ESTACION_BEBIDAS, "Bebidas"),
+        (ESTACION_POSTRES, "Postres"),
+    ]
+
     nombre = models.CharField(
         max_length=150,
         verbose_name="Nombre del plato",
@@ -104,6 +116,31 @@ class Producto(models.Model):
     def controla_stock(self):
         """Indica si el plato tiene control numérico de cupo diario."""
         return self.stock_disponible is not None
+
+    @property
+    def estacion(self):
+        """Determina la estación operativa de cocina alineada con Spring Boot."""
+        if not self.categoria or not self.categoria.nombre:
+            return self.ESTACION_COCINA_CALIENTE
+        cat = self.categoria.nombre.upper()
+        if "BEBIDA" in cat:
+            return self.ESTACION_BEBIDAS
+        elif "POSTRE" in cat:
+            return self.ESTACION_POSTRES
+        nom = (self.nombre or "").upper()
+        if (
+            "ENTRADA" in cat
+            or "CEVICHE" in nom
+            or "TIRADITO" in nom
+            or "LECHE DE TIGRE" in nom
+        ):
+            return self.ESTACION_BARRA_FRIA
+        return self.ESTACION_COCINA_CALIENTE
+
+    @property
+    def estacion_display(self):
+        """Nombre legible de la estación operativa."""
+        return dict(self.ESTACIONES_CHOICES).get(self.estacion, "Cocina Caliente")
 
     @property
     def stock_bajo(self):
@@ -235,6 +272,13 @@ class Pedido(models.Model):
         verbose_name="Versión Concurrente",
     )
 
+    SLA_MINUTOS_VERDE = 10
+    SLA_MINUTOS_AMBAR = 20
+
+    SLA_NORMAL = "NORMAL"
+    SLA_ALERTA = "ALERTA"
+    SLA_CRITICO = "CRITICO"
+
     class Meta:
         db_table = "pedido"
         managed = False
@@ -242,9 +286,51 @@ class Pedido(models.Model):
         verbose_name_plural = "Pedidos / Comandas"
         ordering = ["-fecha_creacion"]
 
+    @property
+    def tiempo_transcurrido_minutos(self):
+        """Minutos transcurridos desde que se emitió la comanda."""
+        if not self.fecha_creacion:
+            return 0
+        ahora = timezone.now()
+        dt = self.fecha_creacion
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, timezone.get_current_timezone())
+        segundos = max(0, int((ahora - dt).total_seconds()))
+        return segundos // 60
+
+    @property
+    def tiempo_transcurrido_formateado(self):
+        """Tiempo de espera en formato legible mm:ss."""
+        if not self.fecha_creacion:
+            return "00:00"
+        ahora = timezone.now()
+        dt = self.fecha_creacion
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, timezone.get_current_timezone())
+        segundos = max(0, int((ahora - dt).total_seconds()))
+        minutos = segundos // 60
+        segs = segundos % 60
+        return f"{minutos:02d}:{segs:02d}"
+
+    @property
+    def nivel_sla(self):
+        """Semáforo SLA del KDS de cocina: NORMAL (<10m), ALERTA (10..20m), CRITICO (>20m)."""
+        mins = self.tiempo_transcurrido_minutos
+        if mins < self.SLA_MINUTOS_VERDE:
+            return self.SLA_NORMAL
+        elif mins <= self.SLA_MINUTOS_AMBAR:
+            return self.SLA_ALERTA
+        return self.SLA_CRITICO
+
+    @property
+    def origen_display(self):
+        """Etiqueta de origen de la comanda (Mesa X o Para llevar)."""
+        if self.mesa:
+            return f"Mesa {self.mesa.numero}"
+        return "Para llevar"
+
     def __str__(self):
-        origen = f"Mesa {self.mesa.numero}" if self.mesa else "Para llevar"
-        return f"Pedido #{self.id} ({origen}) - S/ {self.total}"
+        return f"Pedido #{self.id} ({self.origen_display}) - S/ {self.total}"
 
 
 class SesionCaja(models.Model):
@@ -475,6 +561,16 @@ class DetallePedido(models.Model):
         verbose_name_plural = "Detalles de Pedido"
         ordering = ["id"]
 
+    @property
+    def estacion(self):
+        """Estación de cocina correspondiente a este ítem."""
+        return self.producto.estacion
+
+    @property
+    def estacion_display(self):
+        """Nombre legible de la estación de cocina."""
+        return self.producto.estacion_display
+
     def __str__(self):
         return f"{self.cantidad}x {self.producto.nombre} (Pedido #{self.pedido_id})"
 
@@ -565,6 +661,59 @@ class MovimientoStock(models.Model):
             else f"{self.stock_resultante} porc."
         )
         return f"[{self.tipo}] {self.producto.nombre}: {self.cantidad} -> {res}"
+
+
+class EventoPedido(models.Model):
+    """Auditoría inmutable de transiciones y eventos de comanda (PRB-53 / PRB-57).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'evento_pedido' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    pedido = models.ForeignKey(
+        Pedido,
+        on_delete=models.CASCADE,
+        db_column="pedido_id",
+        related_name="eventos",
+        verbose_name="Pedido",
+    )
+    estado_anterior = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        verbose_name="Estado Anterior",
+    )
+    estado_nuevo = models.CharField(
+        max_length=20,
+        verbose_name="Estado Nuevo",
+    )
+    usuario_id = models.IntegerField(
+        null=True,
+        blank=True,
+        db_column="usuario_id",
+        verbose_name="ID de Usuario / Personal",
+    )
+    motivo = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Motivo / Detalle",
+    )
+    fecha = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Fecha y Hora",
+    )
+
+    class Meta:
+        db_table = "evento_pedido"
+        managed = False
+        verbose_name = "Evento de Pedido"
+        verbose_name_plural = "Eventos de Pedido"
+        ordering = ["-fecha", "-id"]
+
+    def __str__(self):
+        transicion = f"{self.estado_anterior} -> {self.estado_nuevo}"
+        return f"Pedido #{self.pedido_id}: {transicion} ({self.fecha})"
 
 
 class Rol(models.Model):

@@ -93,4 +93,16 @@ urlpatterns = [
         views.sincronizar_seeds_produccion_view,
         name="personal_sync_seeds",
     ),
+    # KDS de cocina en tiempo real: estaciones y semáforo SLA (PRB-57 · P-10)
+    path("cocina/", views.kds_cocina, name="kds_cocina"),
+    path(
+        "cocina/pedidos/<int:pk>/avanzar/",
+        views.kds_avanzar_pedido,
+        name="kds_avanzar_pedido",
+    ),
+    path(
+        "cocina/api/comandas/",
+        views.kds_api_comandas,
+        name="kds_api_comandas",
+    ),
 ]

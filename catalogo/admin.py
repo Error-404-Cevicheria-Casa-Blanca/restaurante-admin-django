@@ -2,7 +2,16 @@ from django.contrib import admin, messages
 from django.db.models import Count
 from django.utils.translation import ngettext
 
-from .models import Categoria, MovimientoStock, Pago, Producto, Rol, SesionCaja, Usuario
+from .models import (
+    Categoria,
+    EventoPedido,
+    MovimientoStock,
+    Pago,
+    Producto,
+    Rol,
+    SesionCaja,
+    Usuario,
+)
 
 
 @admin.register(Categoria)
@@ -217,3 +226,21 @@ class UsuarioAdmin(admin.ModelAdmin):
     list_filter = ("rol",)
     search_fields = ("username",)
     ordering = ("rol_id", "username")
+
+
+@admin.register(EventoPedido)
+class EventoPedidoAdmin(admin.ModelAdmin):
+    """Consulta de auditoría inmutable de eventos de cocina y comanda (PRB-57)."""
+
+    list_display = (
+        "id",
+        "fecha",
+        "pedido",
+        "estado_anterior",
+        "estado_nuevo",
+        "usuario_id",
+        "motivo",
+    )
+    list_filter = ("estado_nuevo", "estado_anterior")
+    search_fields = ("pedido__id", "motivo")
+    ordering = ("-fecha", "-id")

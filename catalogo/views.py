@@ -23,6 +23,13 @@ from .forms import (
     ProductoForm,
     UsuarioOperativoForm,
 )
+from .kds_service import (
+    ESTACIONES_INFO,
+    avanzar_estado_comanda,
+    obtener_comandas_kds,
+    resumen_kpis_kds,
+    serializar_comandas_json,
+)
 from .models import (
     Categoria,
     Mesa,
@@ -1822,3 +1829,107 @@ def sincronizar_seeds_produccion_view(request):
         f"~{res['mesas_actualizadas']}.",
     )
     return redirect("catalogo:personal")
+
+
+# =============================================================================
+# KDS DE COCINA: ESTACIONES, SEMÁFORO SLA Y TIEMPO REAL (PRB-57 · P-10)
+# =============================================================================
+
+
+@staff_required
+def kds_cocina(request):
+    """Pantalla KDS de cocina en tiempo real con estaciones y semáforo SLA."""
+    asegurar_tablas_sqlite()
+
+    estacion = (request.GET.get("estacion") or "").strip().upper()
+    estado = (request.GET.get("estado") or "activos").strip().lower()
+
+    comandas = obtener_comandas_kds(estacion=estacion, estado_filtro=estado)
+    kpis = resumen_kpis_kds()
+
+    context = {
+        "nav_active": "cocina",
+        "comandas": comandas,
+        "kpis": kpis,
+        "estaciones_info": ESTACIONES_INFO,
+        "estacion_activa": estacion,
+        "estado_activo": estado,
+        "ahora": timezone.now(),
+    }
+    return render(request, "catalogo/kds.html", context)
+
+
+@staff_required
+@require_POST
+def kds_avanzar_pedido(request, pk):
+    """Avanza de forma transaccional el estado de preparación de una comanda."""
+    asegurar_tablas_sqlite()
+    nuevo_estado = (request.POST.get("nuevo_estado") or "").strip().upper()
+    motivo = (request.POST.get("motivo") or "").strip()
+
+    try:
+        pedido = avanzar_estado_comanda(
+            pedido_id=pk,
+            nuevo_estado=nuevo_estado,
+            usuario_id=request.user.id,
+            motivo=motivo,
+        )
+    except (Pedido.DoesNotExist, ValidationError) as exc:
+        msg = str(exc)
+        if request.headers.get(
+            "x-requested-with"
+        ) == "XMLHttpRequest" or "application/json" in request.META.get(
+            "HTTP_ACCEPT", ""
+        ):
+            return JsonResponse({"ok": False, "error": msg}, status=400)
+        messages.error(request, msg)
+        return redirect("catalogo:kds_cocina")
+
+    if request.headers.get(
+        "x-requested-with"
+    ) == "XMLHttpRequest" or "application/json" in request.META.get("HTTP_ACCEPT", ""):
+        return JsonResponse(
+            {
+                "ok": True,
+                "pedido_id": pedido.id,
+                "nuevo_estado": pedido.estado,
+                "estado_display": pedido.get_estado_display(),
+            }
+        )
+
+    messages.success(
+        request,
+        f"Comanda #{pedido.id} ({pedido.origen_display}) "
+        f"actualizada a {pedido.get_estado_display()}.",
+    )
+    redirect_url = reverse("catalogo:kds_cocina")
+    query_parts = []
+    if request.POST.get("estacion"):
+        query_parts.append(f"estacion={request.POST.get('estacion')}")
+    if request.POST.get("estado"):
+        query_parts.append(f"estado={request.POST.get('estado')}")
+    if query_parts:
+        redirect_url = f"{redirect_url}?{'&'.join(query_parts)}"
+    return redirect(redirect_url)
+
+
+@staff_required
+def kds_api_comandas(request):
+    """Endpoint JSON liviano para refresco automático (polling) del KDS en vivo."""
+    asegurar_tablas_sqlite()
+    estacion = (request.GET.get("estacion") or "").strip().upper()
+    estado = (request.GET.get("estado") or "activos").strip().lower()
+
+    comandas = obtener_comandas_kds(estacion=estacion, estado_filtro=estado)
+    kpis = resumen_kpis_kds()
+    payload = serializar_comandas_json(comandas)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "kpis": kpis,
+            "total_comandas": len(payload),
+            "comandas": payload,
+            "timestamp": timezone.now().isoformat(),
+        }
+    )
