@@ -2,7 +2,7 @@
 
 Verifica:
 1. Conexión nativa a PostgreSQL 18 (localhost:5432 / casablanca).
-2. Existencia de columnas PRB-86 en 'detalle_pedido': estado_item, estacion, anulado_motivo e índice idx_detalle_estado_estacion.
+2. Existencia de columnas PRB-86 en 'detalle_pedido': estado_item, estacion, anulado_motivo.
 3. Ciclo de vida por ítem y aislamiento de estaciones (Barra Fría vs Bebidas).
 4. Verificación de que marcar 'Listo' en Barra Fría NO marca la comanda completa como lista.
 5. Inserción de eventos inmutables en 'evento_pedido' con FK segura de usuario.
@@ -16,23 +16,45 @@ import sys
 # Agregar raíz del proyecto a sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Configurar Django
+# Configurar Django sin valores sensibles expuestos en código
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-os.environ.setdefault("DJANGO_SECRET_KEY", "casablanca-prod-secret-2026")
-os.environ.setdefault("DB_ENGINE", "django.db.backends.postgresql")
-os.environ.setdefault("DB_NAME", "casablanca")
-os.environ.setdefault("DB_USER", "postgres")
-os.environ.setdefault("DB_PASSWORD", "Jerardo")
-os.environ.setdefault("DB_HOST", "localhost")
-os.environ.setdefault("DB_PORT", "5432")
 
-import django
+# Lectura de variables de entorno para credenciales sensibles
+if "DJANGO_SECRET_KEY" not in os.environ:
+    os.environ["DJANGO_SECRET_KEY"] = os.getenv("DJANGO_SECRET_KEY", "")
+if "DB_PASSWORD" not in os.environ:
+    os.environ["DB_PASSWORD"] = os.getenv("DB_PASSWORD", "")
+
+os.environ.setdefault("DB_ENGINE", "django.db.backends.postgresql")
+os.environ.setdefault("DB_NAME", os.getenv("DB_NAME", "casablanca"))
+os.environ.setdefault("DB_USER", os.getenv("DB_USER", "postgres"))
+os.environ.setdefault("DB_HOST", os.getenv("DB_HOST", "localhost"))
+os.environ.setdefault("DB_PORT", os.getenv("DB_PORT", "5432"))
+
+# Validar que los secretos requeridos se suministren por el entorno
+if not os.environ.get("DJANGO_SECRET_KEY"):
+    sys.exit(
+        "ERROR: Debe definir la variable de entorno DJANGO_SECRET_KEY antes de "
+        "ejecutar este script.\n"
+        "Ejemplo (PowerShell): $env:DJANGO_SECRET_KEY=\"tu-clave-secreta\""
+    )
+
+if not os.environ.get("DB_PASSWORD"):
+    sys.exit(
+        "ERROR: Debe definir la variable de entorno DB_PASSWORD con la contraseña de PostgreSQL.\n"
+        "Ejemplo (PowerShell): $env:DB_PASSWORD=\"tu-contraseña-postgres\""
+    )
+
+import django  # noqa: E402
+
 django.setup()
 
-from decimal import Decimal
-from django.db import connection
-from catalogo.models import Pedido, DetallePedido, Producto, Mesa, Usuario, EventoPedido
-from catalogo.kds_service import avanzar_estado_item, avanzar_estado_comanda
+from django.db import connection  # noqa: E402
+from catalogo.models import (  # noqa: E402
+    DetallePedido, EventoPedido, Mesa, Pedido, Producto, Usuario,
+)
+from catalogo.kds_service import avanzar_estado_item  # noqa: E402
+
 
 def main():
     print("=" * 70)
@@ -45,24 +67,33 @@ def main():
         pg_ver = cur.fetchone()[0]
         print(f"[OK] PostgreSQL Version: {pg_ver[:60]}...")
 
-    # 2. Verificar columnas en detalle_pedido
+    # 2. Aplicar y verificar migración V4__kds_estado_item.sql en detalle_pedido
+    v4_path = os.path.join(
+        os.path.dirname(__file__), "..", "db", "migrations", "V4__kds_estado_item.sql"
+    )
+    if os.path.exists(v4_path):
+        with connection.cursor() as cur:
+            with open(v4_path, "r", encoding="utf-8") as f:
+                cur.execute(f.read())
+        print("[OK] Migración db/migrations/V4__kds_estado_item.sql verificada/aplicada.")
+
     with connection.cursor() as cur:
         cur.execute("""
-            SELECT column_name, data_type, column_default 
-            FROM information_schema.columns 
-            WHERE table_name = 'detalle_pedido' 
+            SELECT column_name, data_type, column_default
+            FROM information_schema.columns
+            WHERE table_name = 'detalle_pedido'
               AND column_name IN ('estado_item', 'estacion', 'anulado_motivo')
             ORDER BY column_name;
         """)
         cols = cur.fetchall()
-        print(f"[OK] Columnas PRB-86 en detalle_pedido:")
+        print("[OK] Columnas PRB-86 en detalle_pedido:")
         for col, dtype, default in cols:
             print(f"     - {col} ({dtype}) DEFAULT {default}")
         assert len(cols) == 3, f"Se esperaban 3 columnas, encontradas {len(cols)}"
 
         cur.execute("""
-            SELECT indexname, indexdef 
-            FROM pg_indexes 
+            SELECT indexname, indexdef
+            FROM pg_indexes
             WHERE tablename = 'detalle_pedido' AND indexname = 'idx_detalle_estado_estacion';
         """)
         idx = cur.fetchone()
@@ -98,7 +129,7 @@ def main():
         precio_unitario=ceviche.precio,
         subtotal=ceviche.precio,
         estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
-        estacion_item=ceviche.estacion,
+        estacion=ceviche.estacion,
     )
     d2 = DetallePedido.objects.create(
         pedido=pedido,
@@ -107,14 +138,19 @@ def main():
         precio_unitario=chicha.precio,
         subtotal=chicha.precio,
         estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
-        estacion_item=chicha.estacion,
+        estacion=chicha.estacion,
     )
     print(f"[OK] Comanda #{pedido.id} creada: estado inicial '{pedido.estado}'")
     print(f"     - Ítem #{d1.id} ({d1.producto.nombre}): {d1.estado_item}")
     print(f"     - Ítem #{d2.id} ({d2.producto.nombre}): {d2.estado_item}")
 
     # 5. Barra Fría inicia su plato
-    avanzar_estado_item(d1.id, DetallePedido.ESTADO_ITEM_COCINANDO, usuario_id=mozo.id, motivo="Cocinero inicia ceviche")
+    avanzar_estado_item(
+        d1.id,
+        DetallePedido.ESTADO_ITEM_COCINANDO,
+        usuario_id=mozo.id,
+        motivo="Cocinero inicia ceviche",
+    )
     d1.refresh_from_db()
     pedido.refresh_from_db()
     print(f"[OK] Paso 1: Ceviche pasa a '{d1.estado_item}', Comanda pasa a '{pedido.estado}'")
@@ -122,20 +158,30 @@ def main():
     assert pedido.estado == Pedido.ESTADO_COCINANDO
 
     # 6. Barra Fría termina y marca LISTO su plato
-    avanzar_estado_item(d1.id, DetallePedido.ESTADO_ITEM_LISTO, usuario_id=mozo.id, motivo="Barra Fría termina ceviche")
+    avanzar_estado_item(
+        d1.id,
+        DetallePedido.ESTADO_ITEM_LISTO,
+        usuario_id=mozo.id,
+        motivo="Barra Fría termina ceviche",
+    )
     d1.refresh_from_db()
     d2.refresh_from_db()
     pedido.refresh_from_db()
-    print(f"[OK] Paso 2 (Aislamiento de estación):")
+    print("[OK] Paso 2 (Aislamiento de estación):")
     print(f"     - Ceviche (Barra Fría): '{d1.estado_item}'")
     print(f"     - Chicha (Bebidas): '{d2.estado_item}'")
     print(f"     - Comanda general: '{pedido.estado}' (NO está LISTO porque falta Bebidas)")
     assert d1.estado_item == DetallePedido.ESTADO_ITEM_LISTO
     assert d2.estado_item == DetallePedido.ESTADO_ITEM_PENDIENTE
-    assert pedido.estado == Pedido.ESTADO_COCINANDO, f"Estado esperado COCINANDO, obtenido {pedido.estado}"
+    assert pedido.estado == Pedido.ESTADO_COCINANDO
 
     # 7. Bebidas marca LISTO su ítem
-    avanzar_estado_item(d2.id, DetallePedido.ESTADO_ITEM_LISTO, usuario_id=mozo.id, motivo="Bar termina chicha")
+    avanzar_estado_item(
+        d2.id,
+        DetallePedido.ESTADO_ITEM_LISTO,
+        usuario_id=mozo.id,
+        motivo="Bar termina chicha",
+    )
     d2.refresh_from_db()
     pedido.refresh_from_db()
     print(f"[OK] Paso 3: Chicha pasa a '{d2.estado_item}' -> Ahora TODOS los platos están listos.")
@@ -143,8 +189,18 @@ def main():
     assert pedido.estado == Pedido.ESTADO_LISTO
 
     # 8. Mozo despacha a mesa
-    avanzar_estado_item(d1.id, DetallePedido.ESTADO_ITEM_SERVIDO, usuario_id=mozo.id, motivo="Mozo sirve ceviche")
-    avanzar_estado_item(d2.id, DetallePedido.ESTADO_ITEM_SERVIDO, usuario_id=mozo.id, motivo="Mozo sirve chicha")
+    avanzar_estado_item(
+        d1.id,
+        DetallePedido.ESTADO_ITEM_SERVIDO,
+        usuario_id=mozo.id,
+        motivo="Mozo sirve ceviche",
+    )
+    avanzar_estado_item(
+        d2.id,
+        DetallePedido.ESTADO_ITEM_SERVIDO,
+        usuario_id=mozo.id,
+        motivo="Mozo sirve chicha",
+    )
     pedido.refresh_from_db()
     print(f"[OK] Paso 4: Ambos ítems SERVIDO -> Comanda general: '{pedido.estado}'")
     assert pedido.estado == Pedido.ESTADO_SERVIDO
@@ -153,7 +209,10 @@ def main():
     eventos = list(EventoPedido.objects.filter(pedido=pedido).order_by("id"))
     print(f"[OK] Auditoría: {len(eventos)} eventos inmutables registrados en 'evento_pedido':")
     for ev in eventos:
-        print(f"     - Evento #{ev.id}: {ev.estado_anterior} -> {ev.estado_nuevo} | Usuario ID: {ev.usuario_id} | Motivo: {ev.motivo}")
+        print(
+            f"     - Evento #{ev.id}: {ev.estado_anterior} -> {ev.estado_nuevo} | "
+            f"Usuario ID: {ev.usuario_id} | Motivo: {ev.motivo}"
+        )
         assert ev.usuario_id == mozo.id
 
     # 10. Limpieza comanda de prueba
@@ -173,6 +232,7 @@ def main():
     print("=" * 70)
     print("TODAS LAS VERIFICACIONES EN POSTGRESQL 18 PASARON EXITOSAMENTE (EXIT=0)")
     print("=" * 70)
+
 
 if __name__ == "__main__":
     main()

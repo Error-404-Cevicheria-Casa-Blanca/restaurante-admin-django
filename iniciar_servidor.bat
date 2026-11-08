@@ -4,11 +4,11 @@ color 0B
 cd /d C:\Users\LOQ\Documents\restaurante-admin-django
 
 :: Variables de conexion a PostgreSQL
-set DB_NAME=casablanca
-set DB_USER=postgres
-set DB_PASSWORD=Jerardo
-set DB_HOST=localhost
-set DB_PORT=5432
+if "%DB_NAME%"=="" set DB_NAME=casablanca
+if "%DB_USER%"=="" set DB_USER=postgres
+if "%DB_PASSWORD%"=="" set /p DB_PASSWORD="Ingrese DB_PASSWORD: "
+if "%DB_HOST%"=="" set DB_HOST=localhost
+if "%DB_PORT%"=="" set DB_PORT=5432
 
 :: Variables de Django
 set DJANGO_DEBUG=1

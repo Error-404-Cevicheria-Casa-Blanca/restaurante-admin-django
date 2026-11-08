@@ -13,11 +13,14 @@ Alcance P-10 (PLAN-PRODUCCION-POS.md §5.1, §8.4, ADR-01):
 - Auditoría inmutable de eventos en la tabla compartida 'evento_pedido'.
 """
 
+import logging
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from .models import DetallePedido, EventoPedido, Pedido, Producto, Usuario
+
+logger = logging.getLogger(__name__)
 
 ESTACIONES_INFO = {
     Producto.ESTACION_BARRA_FRIA: {
@@ -196,10 +199,25 @@ def avanzar_estado_item(detalle_id, nuevo_estado, usuario_id=None, motivo=""):
                 from .stock_service import descontar_stock_pedido
 
                 descontar_stock_pedido(
-                    pedido, usuario_id=usuario_valido_id, estricto=False
+                    pedido_id=pedido.id,
+                    motivo=(
+                        f"Avance KDS ítem #{detalle.id} "
+                        f"({detalle.producto.nombre}) a {nuevo_estado}"
+                    ),
+                    registrado_por=(
+                        f"kds_usuario_{usuario_valido_id}"
+                        if usuario_valido_id
+                        else "kds"
+                    ),
+                    estricto=False,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Error al descontar stock para pedido %s en KDS (ítem %s): %s",
+                    pedido.id,
+                    detalle.id,
+                    exc,
+                )
 
     return detalle
 
@@ -283,10 +301,21 @@ def avanzar_estado_comanda(
                 from .stock_service import descontar_stock_pedido
 
                 descontar_stock_pedido(
-                    pedido, usuario_id=usuario_valido_id, estricto=False
+                    pedido_id=pedido.id,
+                    motivo=(motivo or f"Avance en KDS a {nuevo_estado}")[:255],
+                    registrado_por=(
+                        f"kds_usuario_{usuario_valido_id}"
+                        if usuario_valido_id
+                        else "kds"
+                    ),
+                    estricto=False,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Error al descontar stock para comanda %s en KDS: %s",
+                    pedido.id,
+                    exc,
+                )
 
     return pedido
 

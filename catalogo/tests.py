@@ -2016,3 +2016,51 @@ class KDSCocinaTests(TestCase):
         # 2. _validar_fk_usuario_id con ID inexistente en entorno PostgreSQL
         with patch("django.db.connection.vendor", "postgresql"):
             self.assertIsNone(_validar_fk_usuario_id(999999))
+
+    def test_kds_descuento_stock_automatico_sin_typeerror(self):
+        """PRB-57: Valida avance KDS con descuento de stock y MovimientoStock."""
+        self.ceviche.stock_disponible = 25
+        self.ceviche.save()
+
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("48.00"),
+        )
+        det = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=2,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("96.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # 1. Al pasar a COCINANDO, se descuentan 2 unidades de stock
+        avanzar_estado_item(
+            det.id,
+            DetallePedido.ESTADO_ITEM_COCINANDO,
+            usuario_id=1,
+            motivo="Inicio preparación ceviche",
+        )
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 23)
+
+        # Verificar movimiento de stock generado
+        movs = list(MovimientoStock.objects.filter(pedido=ped))
+        self.assertEqual(len(movs), 1)
+        self.assertEqual(movs[0].cantidad, 2)
+        self.assertEqual(movs[0].tipo, MovimientoStock.TIPO_SALIDA_VENTA)
+        self.assertEqual(movs[0].stock_anterior, 25)
+        self.assertEqual(movs[0].stock_resultante, 23)
+
+        # 2. Al pasar a LISTO (o avanzar comanda), es idempotente y no descuenta doble
+        avanzar_estado_item(
+            det.id,
+            DetallePedido.ESTADO_ITEM_LISTO,
+            usuario_id=1,
+        )
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 23)
+        self.assertEqual(MovimientoStock.objects.filter(pedido=ped).count(), 1)

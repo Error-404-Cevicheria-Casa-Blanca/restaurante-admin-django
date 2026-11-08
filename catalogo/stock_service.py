@@ -165,6 +165,7 @@ def descontar_stock_pedido(
     motivo="",
     registrado_por="pos",
     estricto=True,
+    usuario_id=None,
 ):
     """Descuenta de forma atómica e idempotente el stock de los platos de un pedido.
 
@@ -175,6 +176,12 @@ def descontar_stock_pedido(
     - Con `estricto=True`, si algún plato está agotado o no alcanza su `stock_disponible`,
       lanza `StockInsuficienteError` revirtiendo toda la transacción.
     """
+    if hasattr(pedido_id, "id"):
+        pedido_id = pedido_id.id
+
+    if usuario_id is not None and registrado_por in ("pos", "kds", None):
+        registrado_por = f"usuario_{usuario_id}"
+
     with transaction.atomic():
         pedido = Pedido.objects.select_for_update().get(pk=pedido_id)
         if pedido.estado in (Pedido.ESTADO_ANULADO, Pedido.ESTADO_CANCELADO):
