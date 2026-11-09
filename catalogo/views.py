@@ -23,6 +23,15 @@ from .forms import (
     ProductoForm,
     UsuarioOperativoForm,
 )
+from .impresion_service import (
+    PRINTER_HOST_DEFAULT,
+    PRINTER_MODE_DEFAULT,
+    PRINTER_PORT_DEFAULT,
+    despachar_cola_pendientes,
+    formatear_fecha,
+    reimprimir_pedido,
+    reintentar_trabajo,
+)
 from .kds_service import (
     ESTACIONES_INFO,
     avanzar_estado_comanda,
@@ -34,6 +43,7 @@ from .kds_service import (
 from .models import (
     Categoria,
     DetallePedido,
+    ImpresionCola,
     Mesa,
     MovimientoStock,
     Pago,
@@ -2025,6 +2035,195 @@ def kds_api_comandas(request):
             "kpis": kpis,
             "total_comandas": len(payload),
             "comandas": payload,
+            "timestamp": timezone.now().isoformat(),
+        }
+    )
+
+
+# =============================================================================
+# COLA DE IMPRESIÓN TÉRMICA ESC/POS 80 MM (PRB-58 / P-11)
+# =============================================================================
+
+
+@staff_required
+def impresion_monitor(request):
+    """Monitor operativo de la cola de impresión térmica ESC/POS de 80 mm (PRB-58)."""
+    asegurar_tablas_sqlite()
+    estado_filtro = (request.GET.get("estado") or "todos").strip().lower()
+    tipo_filtro = (request.GET.get("tipo") or "todos").strip().upper()
+
+    qs = ImpresionCola.objects.select_related("pedido").order_by(
+        "-fecha_creacion", "-id"
+    )
+
+    if estado_filtro == "pendientes":
+        qs = qs.filter(estado=ImpresionCola.ESTADO_PENDIENTE)
+    elif estado_filtro == "impresos":
+        qs = qs.filter(estado=ImpresionCola.ESTADO_IMPRESO)
+    elif estado_filtro == "fallidos":
+        qs = qs.filter(estado=ImpresionCola.ESTADO_FALLIDO)
+
+    if tipo_filtro in [ImpresionCola.TIPO_COMANDA, ImpresionCola.TIPO_PRECUENTA]:
+        qs = qs.filter(tipo=tipo_filtro)
+
+    hoy = timezone.localdate()
+    total_pendientes = ImpresionCola.objects.filter(
+        estado=ImpresionCola.ESTADO_PENDIENTE
+    ).count()
+    total_impresos_hoy = ImpresionCola.objects.filter(
+        estado=ImpresionCola.ESTADO_IMPRESO, fecha_impresion__date=hoy
+    ).count()
+    total_fallidos = ImpresionCola.objects.filter(
+        estado=ImpresionCola.ESTADO_FALLIDO
+    ).count()
+
+    trabajos = list(qs[:50])
+
+    context = {
+        "nav_active": "impresion",
+        "trabajos": trabajos,
+        "estado_filtro": estado_filtro,
+        "tipo_filtro": tipo_filtro,
+        "total_pendientes": total_pendientes,
+        "total_impresos_hoy": total_impresos_hoy,
+        "total_fallidos": total_fallidos,
+        "total_mostrados": len(trabajos),
+        "printer_host": PRINTER_HOST_DEFAULT,
+        "printer_port": PRINTER_PORT_DEFAULT,
+        "printer_mode": PRINTER_MODE_DEFAULT,
+    }
+    return render(request, "catalogo/impresion.html", context)
+
+
+@staff_required
+def impresion_reintentar(request, pk):
+    """Reintenta un trabajo de impresión en cola (PRB-58)."""
+    asegurar_tablas_sqlite()
+    exito, mensaje = reintentar_trabajo(pk)
+
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JsonResponse({"ok": exito, "mensaje": mensaje, "id": pk})
+
+    if exito:
+        messages.success(request, f"Trabajo #{pk} reintentado exitosamente.")
+    else:
+        messages.error(request, f"Error al reintentar trabajo #{pk}: {mensaje}")
+
+    return redirect("catalogo:impresion_monitor")
+
+
+@staff_required
+def impresion_despachar_pendientes(request):
+    """Despacha todos los trabajos pendientes de la cola (PRB-58)."""
+    asegurar_tablas_sqlite()
+    if request.method == "POST":
+        resultados = despachar_cola_pendientes(limite=20)
+        exitosos = sum(1 for r in resultados if r["exito"])
+        total = len(resultados)
+
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JsonResponse({"ok": True, "total": total, "exitosos": exitosos})
+
+        messages.info(
+            request,
+            f"Se procesaron {total} trabajos ({exitosos} impresos correctamente).",
+        )
+    return redirect("catalogo:impresion_monitor")
+
+
+@staff_required
+def impresion_imprimir_pedido(request, pedido_id):
+    """Encola y despacha comanda o pre-cuenta para un pedido específico (PRB-58)."""
+    asegurar_tablas_sqlite()
+    pedido = get_object_or_404(Pedido, id=pedido_id)
+    tipo = (
+        request.POST.get("tipo")
+        or request.GET.get("tipo")
+        or ImpresionCola.TIPO_COMANDA
+    ).upper()
+    estacion = request.POST.get("estacion") or request.GET.get("estacion") or None
+
+    trabajo = reimprimir_pedido(pedido.id, tipo=tipo, estacion=estacion)
+
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        if trabajo:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "trabajo_id": trabajo.id,
+                    "estado": trabajo.estado,
+                    "tipo": trabajo.tipo,
+                    "mensaje": (
+                        f"{trabajo.get_tipo_display()} #{trabajo.id} "
+                        f"encolada ({trabajo.estado})."
+                    ),
+                }
+            )
+        return JsonResponse(
+            {"ok": False, "mensaje": "No se pudo generar el trabajo de impresión."},
+            status=400,
+        )
+
+    if trabajo and trabajo.estado == ImpresionCola.ESTADO_IMPRESO:
+        messages.success(
+            request,
+            f"{trabajo.get_tipo_display()} para Pedido #{pedido.id} "
+            f"impresa correctamente en 80 mm.",
+        )
+    elif trabajo:
+        messages.warning(
+            request,
+            f"{trabajo.get_tipo_display()} encolada con estado "
+            f"{trabajo.get_estado_display()}: {trabajo.error or ''}",
+        )
+    else:
+        messages.error(
+            request, f"No se pudo encolar la impresión para el Pedido #{pedido.id}."
+        )
+
+    next_url = (
+        request.POST.get("next")
+        or request.GET.get("next")
+        or reverse("catalogo:impresion_monitor")
+    )
+    return redirect(next_url)
+
+
+@staff_required
+def impresion_api_cola(request):
+    """Endpoint JSON liviano para monitoreo en vivo de la cola de impresión térmica."""
+    asegurar_tablas_sqlite()
+    qs = ImpresionCola.objects.order_by("-fecha_creacion")[:20]
+
+    trabajos_data = []
+    for t in qs:
+        trabajos_data.append(
+            {
+                "id": t.id,
+                "pedido_id": t.pedido_id,
+                "tipo": t.tipo,
+                "estacion": t.estacion,
+                "estado": t.estado,
+                "intentos": t.intentos,
+                "error": t.error,
+                "fecha_creacion": formatear_fecha(t.fecha_creacion),
+                "fecha_impresion": (
+                    formatear_fecha(t.fecha_impresion) if t.fecha_impresion else None
+                ),
+            }
+        )
+
+    pendientes = ImpresionCola.objects.filter(
+        estado=ImpresionCola.ESTADO_PENDIENTE
+    ).count()
+    fallidos = ImpresionCola.objects.filter(estado=ImpresionCola.ESTADO_FALLIDO).count()
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "total_pendientes": pendientes,
+            "total_fallidos": fallidos,
+            "trabajos": trabajos_data,
             "timestamp": timezone.now().isoformat(),
         }
     )
