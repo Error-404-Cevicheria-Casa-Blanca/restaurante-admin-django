@@ -4,17 +4,47 @@ import os
 import subprocess
 import sys
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
-from catalogo.models import Categoria, Mesa, Pago, Pedido, Producto, SesionCaja
+from catalogo.kds_service import (
+    avanzar_estado_comanda,
+    avanzar_estado_item,
+    obtener_comandas_kds,
+    resumen_kpis_kds,
+)
+from catalogo.models import (
+    Categoria,
+    DetallePedido,
+    EventoPedido,
+    Mesa,
+    MovimientoStock,
+    Pago,
+    Pedido,
+    Producto,
+    Rol,
+    SesionCaja,
+    Usuario,
+)
+from catalogo.produccion_seeds import HASH_DEBIL_DEMO, auditar_datos_produccion
+from catalogo.stock_service import (
+    StockInsuficienteError,
+    ajustar_stock_producto,
+    descontar_stock_pedido,
+    fijar_stock_diario,
+    revertir_stock_item,
+    revertir_stock_pedido,
+    sincronizar_stock_con_pedidos,
+)
 
 RUTA_PROYECTO = str(settings.BASE_DIR)
 
@@ -143,6 +173,16 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(SesionCaja)
         if Pago._meta.db_table not in existentes:
             editor.create_model(Pago)
+        if DetallePedido._meta.db_table not in existentes:
+            editor.create_model(DetallePedido)
+        if MovimientoStock._meta.db_table not in existentes:
+            editor.create_model(MovimientoStock)
+        if Rol._meta.db_table not in existentes:
+            editor.create_model(Rol)
+        if Usuario._meta.db_table not in existentes:
+            editor.create_model(Usuario)
+        if EventoPedido._meta.db_table not in existentes:
+            editor.create_model(EventoPedido)
 
 
 class CatalogoModelTests(TestCase):
@@ -1022,3 +1062,1032 @@ class ReportesVentasTests(TestCase):
         resp_invalida = self.client.get("/reportes/?fecha=fecha-invalida")
         self.assertEqual(resp_invalida.status_code, 200)
         self.assertTrue(resp_invalida.context["es_hoy"])
+
+
+# =============================================================================
+# Pruebas de Inventario Reducido: Stock del Día, Descuento y Reversión (PRB-59)
+# =============================================================================
+
+
+class StockDelDiaTests(TestCase):
+    """Pruebas unitarias e integrales de stock diario, descuento y reversión (PRB-59)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="chef_stock",
+            password="PasswordSegura123!",
+            is_staff=True,
+        )
+        self.cat_ceviches = Categoria.objects.create(nombre="Ceviches Stock")
+        self.cat_bebidas = Categoria.objects.create(nombre="Bebidas Stock")
+
+        self.ceviche = Producto.objects.create(
+            nombre="Ceviche de Conchas Negras",
+            precio=Decimal("56.00"),
+            disponible=True,
+            stock_disponible=5,
+            stock_minimo=2,
+            categoria=self.cat_ceviches,
+        )
+        self.tiradito = Producto.objects.create(
+            nombre="Tiradito al Ají Amarillo",
+            precio=Decimal("49.00"),
+            disponible=True,
+            stock_disponible=3,
+            stock_minimo=1,
+            categoria=self.cat_ceviches,
+        )
+        self.chicha = Producto.objects.create(
+            nombre="Chicha Morada 1L",
+            precio=Decimal("16.00"),
+            disponible=True,
+            stock_disponible=None,
+            stock_minimo=0,
+            categoria=self.cat_bebidas,
+        )
+        self.mesa = Mesa.objects.create(
+            numero=12,
+            capacidad=4,
+            ubicacion="Segundo piso",
+            estado=Mesa.ESTADO_OCUPADA,
+        )
+
+    def test_fijar_stock_diario_y_propiedades_alerta(self):
+        """PRB-59: Fijar cupo actualiza disponible, alerta de bajo stock y kardex."""
+        plato, mov = fijar_stock_diario(
+            self.ceviche.id,
+            stock_disponible=2,
+            stock_minimo=2,
+            motivo="Ingreso matutino de conchas",
+            registrado_por="chef_stock",
+        )
+        self.assertEqual(plato.stock_disponible, 2)
+        self.assertTrue(plato.disponible)
+        self.assertTrue(plato.controla_stock)
+        self.assertTrue(plato.stock_bajo)
+        self.assertEqual(mov.tipo, MovimientoStock.TIPO_CARGA_DIARIA)
+
+        plato_cero, _ = fijar_stock_diario(self.ceviche.id, stock_disponible=0)
+        self.assertEqual(plato_cero.stock_disponible, 0)
+        self.assertFalse(plato_cero.disponible)
+
+        plato_libre, _ = fijar_stock_diario(self.ceviche.id, stock_disponible=None)
+        self.assertIsNone(plato_libre.stock_disponible)
+        self.assertTrue(plato_libre.disponible)
+        self.assertFalse(plato_libre.controla_stock)
+
+    def test_descuento_transaccional_idempotente_y_agotamiento_en_cero(self):
+        """PRB-59: Descuenta cupo exacto, ignora ilimitados, agota en 0 y es idempotente."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("296.00"),
+        )
+        items = [
+            {"producto_id": self.ceviche.id, "cantidad": 5},
+            {"producto_id": self.chicha.id, "cantidad": 1},
+        ]
+        movs_1 = descontar_stock_pedido(pedido.id, items=items)
+        self.assertEqual(len(movs_1), 1)
+
+        self.ceviche.refresh_from_db()
+        self.chicha.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 0)
+        self.assertFalse(self.ceviche.disponible)
+        self.assertIsNone(self.chicha.stock_disponible)
+        self.assertTrue(self.chicha.disponible)
+
+        # Reintento idempotente con el mismo pedido_id no vuelve a descontar
+        movs_2 = descontar_stock_pedido(pedido.id, items=items)
+        self.assertEqual([m.id for m in movs_1], [m.id for m in movs_2])
+
+    def test_descuento_stock_insuficiente_hace_rollback_total(self):
+        """PRB-59: Si un ítem supera el cupo disponible, ningún plato se descuenta."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("300.00"),
+        )
+        items = [
+            {"producto_id": self.ceviche.id, "cantidad": 2},
+            {"producto_id": self.tiradito.id, "cantidad": 4},  # Solo hay 3 disponibles
+        ]
+        with self.assertRaises(StockInsuficienteError) as ctx:
+            descontar_stock_pedido(pedido.id, items=items)
+
+        self.assertEqual(ctx.exception.codigo, "STOCK_INSUFICIENTE")
+        self.assertEqual(len(ctx.exception.detalles), 1)
+        self.assertEqual(ctx.exception.detalles[0]["producto_id"], self.tiradito.id)
+
+        self.ceviche.refresh_from_db()
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 5)
+        self.assertEqual(self.tiradito.stock_disponible, 3)
+        self.assertEqual(MovimientoStock.objects.filter(pedido=pedido).count(), 0)
+
+    def test_reversion_stock_pedido_anulado_reactiva_plato_agotado_e_idempotencia(self):
+        """PRB-59: Revertir pedido restaura cupo, reactiva plato desde 0 y es idempotente."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("147.00"),
+        )
+        descontar_stock_pedido(
+            pedido.id,
+            items=[{"producto_id": self.tiradito.id, "cantidad": 3}],
+        )
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.tiradito.stock_disponible, 0)
+        self.assertFalse(self.tiradito.disponible)
+
+        pedido.estado = Pedido.ESTADO_ANULADO
+        pedido.save(update_fields=["estado"])
+
+        revs_1 = revertir_stock_pedido(pedido.id, motivo="Cliente se retiró")
+        self.assertEqual(len(revs_1), 1)
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.tiradito.stock_disponible, 3)
+        self.assertTrue(self.tiradito.disponible)
+
+        # Segunda llamada es no-op idempotente (no infla el stock a 6)
+        revs_2 = revertir_stock_pedido(pedido.id, motivo="Reintento duplicado")
+        self.assertEqual(revs_2, [])
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.tiradito.stock_disponible, 3)
+
+    def test_reversion_parcial_por_item_individual(self):
+        """PRB-59: Revertir un ítem individual restaura solo la cantidad anulada."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=1,
+            estado=Pedido.ESTADO_COCINANDO,
+            total=Decimal("224.00"),
+        )
+        descontar_stock_pedido(
+            pedido.id,
+            items=[{"producto_id": self.ceviche.id, "cantidad": 4}],
+        )
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 1)
+
+        mov = revertir_stock_item(pedido.id, self.ceviche.id, cantidad=2)
+        self.assertIsNotNone(mov)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 3)
+
+    def test_sincronizacion_automatica_pedidos_pos_y_anulaciones(self):
+        """PRB-59: Concilia automáticamente DetallePedido y ANULADO escritos desde Java."""
+        fijar_stock_diario(self.ceviche.id, stock_disponible=4, stock_minimo=1)
+
+        pedido = Pedido.objects.create(
+            mesa=self.mesa,
+            mozo_id=2,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("224.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=pedido,
+            producto=self.ceviche,
+            precio_unitario=Decimal("56.00"),
+            cantidad=4,
+            subtotal=Decimal("224.00"),
+        )
+
+        res_1 = sincronizar_stock_con_pedidos()
+        self.assertEqual(res_1["descuentos"], 1)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 0)
+        self.assertFalse(self.ceviche.disponible)
+
+        # Ejecutar de nuevo sin cambios es idempotente
+        res_2 = sincronizar_stock_con_pedidos()
+        self.assertEqual(res_2["descuentos"], 0)
+        self.assertEqual(res_2["reversiones"], 0)
+
+        # Java anula el pedido -> el sincronizador restaura las 4 porciones y reactiva
+        pedido.estado = Pedido.ESTADO_ANULADO
+        pedido.save(update_fields=["estado"])
+        res_3 = sincronizar_stock_con_pedidos()
+        self.assertEqual(res_3["reversiones"], 1)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 4)
+        self.assertTrue(self.ceviche.disponible)
+
+    def test_panel_web_stock_dia_fijar_ajustar_y_carga_masiva(self):
+        """PRB-59: Flujo web completo en /stock-del-dia/, ajustes +/- y carga masiva."""
+        self.client.force_login(self.staff_user)
+
+        resp_get = self.client.get("/stock-del-dia/")
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertContains(resp_get, "Stock del Día")
+        self.assertEqual(resp_get.context["kpis_stock"]["con_cupo"], 2)
+
+        # Fijar cupo individual por JSON/AJAX
+        resp_json = self.client.post(
+            f"/platos/{self.ceviche.id}/fijar-stock/",
+            {"stock_disponible": "12", "stock_minimo": "3"},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_json.status_code, 200)
+        self.assertEqual(resp_json.json()["stock_disponible"], 12)
+
+        # Ajuste relativo (-2 porciones)
+        resp_aj = self.client.post(
+            f"/platos/{self.ceviche.id}/ajustar-stock/",
+            {"delta": "-2", "motivo": "Degustación"},
+        )
+        self.assertEqual(resp_aj.status_code, 302)
+        self.ceviche.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 10)
+
+        # Carga masiva sobre categoría Ceviches
+        resp_masiva = self.client.post(
+            "/stock-del-dia/carga-masiva/",
+            {
+                "accion": "fijar_cupo",
+                "categoria_id": str(self.cat_ceviches.id),
+                "cupo": "20",
+                "stock_minimo": "4",
+            },
+        )
+        self.assertEqual(resp_masiva.status_code, 302)
+        self.ceviche.refresh_from_db()
+        self.tiradito.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 20)
+        self.assertEqual(self.tiradito.stock_disponible, 20)
+
+    def test_toggle_disponibilidad_bloquea_activar_plato_con_stock_cero(self):
+        """PRB-59: Impide reactivar manualmente un plato cuyo cupo diario está en 0."""
+        self.client.force_login(self.staff_user)
+        fijar_stock_diario(self.tiradito.id, stock_disponible=0)
+
+        resp_json = self.client.post(
+            f"/platos/{self.tiradito.id}/toggle-disponibilidad/",
+            {"disponible": "true"},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_json.status_code, 409)
+        self.tiradito.refresh_from_db()
+        self.assertFalse(self.tiradito.disponible)
+        self.assertEqual(self.tiradito.stock_disponible, 0)
+
+    def test_ajustar_stock_producto_impide_quedar_en_negativo(self):
+        """PRB-59: El ajuste directo suma/resta porciones y rechaza saldos negativos."""
+        plato, mov = ajustar_stock_producto(
+            self.tiradito.id, delta=2, motivo="Nuevo ingreso"
+        )
+        self.assertEqual(plato.stock_disponible, 5)
+        self.assertEqual(mov.tipo, MovimientoStock.TIPO_AJUSTE)
+
+        with self.assertRaises(ValidationError):
+            ajustar_stock_producto(self.tiradito.id, delta=-10)
+
+
+class DatosRealesProduccionTests(TestCase):
+    """Pruebas integrales de seeds reales, usuarios/PIN BCrypt y panel /personal/ (PRB-52)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="gerente_prod",
+            password="ClaveSegura!2026",
+            is_staff=True,
+        )
+        self.normal_user = User.objects.create_user(
+            username="externo",
+            password="ClaveSegura!2026",
+            is_staff=False,
+        )
+
+    def test_modelos_rol_y_usuario_son_unmanaged_y_validan_bcrypt_d8(self):
+        """PRB-52 / D7 / D8: Rol y Usuario tienen managed=False y hashes BCrypt cost 10."""
+        self.assertFalse(Rol._meta.managed)
+        self.assertFalse(Usuario._meta.managed)
+
+        rol_mozo = Rol.objects.create(nombre="MOZO")
+        mozo = Usuario(username="mozo_turno", rol=rol_mozo)
+
+        with self.assertRaises(ValidationError):
+            mozo.set_password_bcrypt("password123")
+        with self.assertRaises(ValidationError):
+            mozo.set_password_bcrypt("corta")
+        with self.assertRaises(ValidationError):
+            mozo.set_pin_bcrypt("12ab")
+
+        mozo.set_password_bcrypt("MarinaSegura#2026")
+        mozo.set_pin_bcrypt("4815")
+        mozo.save()
+
+        self.assertTrue(mozo.clave_hash.startswith("$2b$10$"))
+        self.assertTrue(mozo.pin_hash.startswith("$2b$10$"))
+        self.assertTrue(mozo.tiene_pin)
+        self.assertTrue(mozo.check_password_bcrypt("MarinaSegura#2026"))
+        self.assertFalse(mozo.check_password_bcrypt("incorrecta"))
+        self.assertTrue(mozo.check_pin_bcrypt("4815"))
+        self.assertFalse(mozo.check_pin_bcrypt("0000"))
+
+    def test_comando_seed_produccion_idempotente_y_fotos_verificadas(self):
+        """PRB-52: seed_produccion puebla carta (15), mesas (13), roles (4) y PINs sin duplicar."""
+        # Simular residuos previos de seed.sql (admin_test con password123 y plato demo)
+        r_admin = Rol.objects.create(nombre="ADMIN")
+        r_mozo = Rol.objects.create(nombre="MOZO")
+        Usuario.objects.create(
+            username="admin_test",
+            clave_hash=HASH_DEBIL_DEMO,
+            rol=r_admin,
+        )
+        Usuario.objects.create(
+            username="mozo_01",
+            clave_hash=HASH_DEBIL_DEMO,
+            pin_hash=None,
+            rol=r_mozo,
+        )
+        cat_vieja = Categoria.objects.create(nombre="Entradas")
+        Producto.objects.create(
+            nombre="Ceviche Clásico",
+            precio=Decimal("48.00"),
+            disponible=True,
+            categoria=cat_vieja,
+        )
+
+        # Ejecutar 2 veces seguidas para verificar idempotencia total
+        call_command("seed_produccion")
+        call_command("seed_produccion")
+        call_command("seed_produccion", "--solo-auditar")
+
+        auditoria = auditar_datos_produccion()
+        self.assertTrue(auditoria["ok"], auditoria["errores"])
+        self.assertEqual(auditoria["roles_total"], 4)
+        self.assertEqual(auditoria["platos_oficiales"], 15)
+        self.assertEqual(auditoria["mesas_total"], 13)
+        self.assertFalse(Usuario.objects.filter(username="admin_test").exists())
+        self.assertFalse(Usuario.objects.filter(clave_hash=HASH_DEBIL_DEMO).exists())
+        self.assertFalse(Categoria.objects.filter(nombre="Entradas").exists())
+
+        mozo1 = Usuario.objects.get(username="mozo_01")
+        self.assertTrue(mozo1.tiene_pin)
+        self.assertTrue(mozo1.check_pin_bcrypt("3011"))
+
+    def test_personal_requiere_staff_autenticado(self):
+        """PRB-52: /personal/ exige autenticación con permisos de staff."""
+        resp_anon = self.client.get("/personal/")
+        self.assertEqual(resp_anon.status_code, 302)
+        self.assertIn("/login/", resp_anon["Location"])
+
+        self.client.force_login(self.normal_user)
+        resp_no_staff = self.client.get("/personal/")
+        self.assertEqual(resp_no_staff.status_code, 302)
+
+    def test_panel_personal_alta_rotacion_pin_y_desbloqueo(self):
+        """PRB-52 / PRB-12: Permite crear usuario POS, rotar PIN/clave y desbloquear cuenta."""
+        self.client.force_login(self.staff_user)
+
+        resp_get = self.client.get("/personal/")
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertEqual(Rol.objects.count(), 4)
+
+        rol_cajero = Rol.objects.get(nombre="CAJERO")
+        resp_crear = self.client.post(
+            "/personal/nuevo/",
+            {
+                "username": "cajero_noche",
+                "rol": str(rol_cajero.id),
+                "password": "TurnoNoche!2026",
+                "pin": "7788",
+            },
+        )
+        self.assertEqual(resp_crear.status_code, 302)
+        cajero = Usuario.objects.get(username="cajero_noche")
+        self.assertTrue(cajero.check_password_bcrypt("TurnoNoche!2026"))
+        self.assertTrue(cajero.check_pin_bcrypt("7788"))
+
+        # Simular bloqueo por intentos fallidos en el POS y desbloquear desde Django
+        cajero.intentos_fallidos = 5
+        cajero.bloqueado_hasta = timezone.now() + timezone.timedelta(minutes=15)
+        cajero.save(update_fields=["intentos_fallidos", "bloqueado_hasta"])
+        self.assertTrue(cajero.esta_bloqueado)
+
+        resp_unlock = self.client.post(f"/personal/{cajero.id}/desbloquear/")
+        self.assertEqual(resp_unlock.status_code, 302)
+        cajero.refresh_from_db()
+        self.assertFalse(cajero.esta_bloqueado)
+        self.assertEqual(cajero.intentos_fallidos, 0)
+
+        # Rotar PIN a 9922 desde el formulario inline
+        resp_upd = self.client.post(
+            f"/personal/{cajero.id}/credenciales/",
+            {
+                "rol_id": str(rol_cajero.id),
+                "nueva_clave": "",
+                "nuevo_pin": "9922",
+            },
+        )
+        self.assertEqual(resp_upd.status_code, 302)
+        cajero.refresh_from_db()
+        self.assertTrue(cajero.check_pin_bcrypt("9922"))
+
+        # Sincronizar seeds reales desde botón web
+        resp_sync = self.client.post("/personal/sincronizar-produccion/")
+        self.assertEqual(resp_sync.status_code, 302)
+        self.assertTrue(auditar_datos_produccion()["ok"])
+
+
+class KDSCocinaTests(TestCase):
+    """Pruebas integrales del KDS web de cocina, estaciones y semáforo SLA (PRB-57)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.cocinero = User.objects.create_user(
+            username="jefe_cocina",
+            password="ClaveCocina!2026",
+            is_staff=True,
+        )
+        self.mozo = User.objects.create_user(
+            username="mozo_salon",
+            password="ClaveMozo!2026",
+            is_staff=False,
+        )
+
+        # Categorías
+        self.cat_entradas = Categoria.objects.create(nombre="Entradas Marinas")
+        self.cat_ceviches = Categoria.objects.create(nombre="Ceviches y Tiraditos")
+        self.cat_fondos = Categoria.objects.create(nombre="Platos de Fondo")
+        self.cat_bebidas = Categoria.objects.create(nombre="Bebidas")
+        self.cat_postres = Categoria.objects.create(nombre="Postres")
+
+        # Platos por estación
+        self.ceviche = Producto.objects.create(
+            nombre="Ceviche Clásico Casa Blanca",
+            precio=Decimal("48.00"),
+            disponible=True,
+            categoria=self.cat_ceviches,
+        )
+        self.leche_tigre = Producto.objects.create(
+            nombre="Leche de Tigre Clásica",
+            precio=Decimal("25.00"),
+            disponible=True,
+            categoria=self.cat_entradas,
+        )
+        self.jalea = Producto.objects.create(
+            nombre="Jalea Mixta Real",
+            precio=Decimal("58.00"),
+            disponible=True,
+            categoria=self.cat_fondos,
+        )
+        self.chicha = Producto.objects.create(
+            nombre="Chicha Morada de la Casa (1 L)",
+            precio=Decimal("16.00"),
+            disponible=True,
+            categoria=self.cat_bebidas,
+        )
+        self.suspiro = Producto.objects.create(
+            nombre="Suspiro a la Limeña",
+            precio=Decimal("14.00"),
+            disponible=True,
+            categoria=self.cat_postres,
+        )
+
+        # Mesa
+        self.mesa1 = Mesa.objects.create(
+            numero=1,
+            capacidad=4,
+            ubicacion="Primer piso - Salón",
+            estado=Mesa.ESTADO_OCUPADA,
+        )
+
+    def test_derivacion_de_estaciones_de_cocina_y_items(self):
+        """PRB-57: Valida asignación canónica a BARRA_FRIA, COCINA_CALIENTE, BEBIDAS y POSTRES."""
+        self.assertEqual(self.ceviche.estacion, Producto.ESTACION_BARRA_FRIA)
+        self.assertEqual(self.leche_tigre.estacion, Producto.ESTACION_BARRA_FRIA)
+        self.assertEqual(self.jalea.estacion, Producto.ESTACION_COCINA_CALIENTE)
+        self.assertEqual(self.chicha.estacion, Producto.ESTACION_BEBIDAS)
+        self.assertEqual(self.suspiro.estacion, Producto.ESTACION_POSTRES)
+
+        # En DetallePedido
+        pedido = Pedido.objects.create(
+            mesa=self.mesa1, mozo_id=1, total=Decimal("48.00")
+        )
+        det = DetallePedido.objects.create(
+            pedido=pedido,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+        )
+        self.assertEqual(det.estacion, Producto.ESTACION_BARRA_FRIA)
+        self.assertIn("Barra Fría", det.estacion_display)
+
+    def test_cronometro_sla_y_semaforo_de_tiempos(self):
+        """PRB-57: Semáforo SLA clasifica en NORMAL (<10m), ALERTA (10..20m) y CRITICO (>20m)."""
+        ahora = timezone.now()
+
+        # Comanda reciente (4 minutos): NORMAL (Verde)
+        p_normal = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            total=Decimal("48.00"),
+        )
+        Pedido.objects.filter(pk=p_normal.pk).update(
+            fecha_creacion=ahora - timezone.timedelta(minutes=4, seconds=15)
+        )
+        p_normal.refresh_from_db()
+        self.assertEqual(p_normal.tiempo_transcurrido_minutos, 4)
+        self.assertEqual(p_normal.nivel_sla, Pedido.SLA_NORMAL)
+
+        # Comanda con demora moderada (14 minutos): ALERTA (Ámbar)
+        p_alerta = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            total=Decimal("58.00"),
+        )
+        Pedido.objects.filter(pk=p_alerta.pk).update(
+            fecha_creacion=ahora - timezone.timedelta(minutes=14, seconds=30)
+        )
+        p_alerta.refresh_from_db()
+        self.assertEqual(p_alerta.tiempo_transcurrido_minutos, 14)
+        self.assertEqual(p_alerta.nivel_sla, Pedido.SLA_ALERTA)
+
+        # Comanda crítica (25 minutos): CRITICO (Rojo)
+        p_critico = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            total=Decimal("70.00"),
+        )
+        Pedido.objects.filter(pk=p_critico.pk).update(
+            fecha_creacion=ahora - timezone.timedelta(minutes=25, seconds=5)
+        )
+        p_critico.refresh_from_db()
+        self.assertEqual(p_critico.tiempo_transcurrido_minutos, 25)
+        self.assertEqual(p_critico.nivel_sla, Pedido.SLA_CRITICO)
+
+    def test_avanzar_estado_comanda_y_auditoria_evento_pedido(self):
+        """PRB-57: Transiciones PENDIENTE -> COCINANDO -> LISTO -> SERVIDO con EventoPedido."""
+        pedido = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=2,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("106.00"),
+        )
+
+        # 1. PENDIENTE -> COCINANDO
+        p1 = avanzar_estado_comanda(pedido.id, Pedido.ESTADO_COCINANDO, usuario_id=10)
+        self.assertEqual(p1.estado, Pedido.ESTADO_COCINANDO)
+        self.assertEqual(p1.version, 2)
+        ev1 = EventoPedido.objects.filter(pedido=pedido).first()
+        self.assertIsNotNone(ev1)
+        self.assertEqual(ev1.estado_anterior, Pedido.ESTADO_PENDIENTE)
+        self.assertEqual(ev1.estado_nuevo, Pedido.ESTADO_COCINANDO)
+        self.assertEqual(ev1.usuario_id, 10)
+
+        # 2. COCINANDO -> LISTO
+        p2 = avanzar_estado_comanda(pedido.id, Pedido.ESTADO_LISTO, usuario_id=10)
+        self.assertEqual(p2.estado, Pedido.ESTADO_LISTO)
+        self.assertEqual(EventoPedido.objects.filter(pedido=pedido).count(), 2)
+
+        # 3. LISTO -> SERVIDO
+        p3 = avanzar_estado_comanda(pedido.id, Pedido.ESTADO_SERVIDO, usuario_id=2)
+        self.assertEqual(p3.estado, Pedido.ESTADO_SERVIDO)
+        self.assertEqual(EventoPedido.objects.filter(pedido=pedido).count(), 3)
+
+        # 4. Transición inválida desde SERVIDO debe lanzar ValidationError
+        with self.assertRaises(ValidationError):
+            avanzar_estado_comanda(pedido.id, Pedido.ESTADO_COCINANDO)
+
+    def test_filtrado_por_estaciones_y_estados_en_kds(self):
+        """PRB-57: La cocina filtra comandas e ítems según la estación de trabajo."""
+        # Pedido 1: solo ceviche (BARRA_FRIA)
+        p1 = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("48.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=p1,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+        )
+
+        # Pedido 2: mixto (jalea en COCINA_CALIENTE + chicha en BEBIDAS)
+        p2 = Pedido.objects.create(
+            mesa=None, mozo_id=1, estado=Pedido.ESTADO_COCINANDO, total=Decimal("74.00")
+        )
+        DetallePedido.objects.create(
+            pedido=p2,
+            producto=self.jalea,
+            cantidad=1,
+            precio_unitario=Decimal("58.00"),
+            subtotal=Decimal("58.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=p2,
+            producto=self.chicha,
+            cantidad=1,
+            precio_unitario=Decimal("16.00"),
+            subtotal=Decimal("16.00"),
+        )
+
+        # Consulta todas las estaciones
+        todas = obtener_comandas_kds(estacion=None, estado_filtro="activos")
+        self.assertEqual(len(todas), 2)
+
+        # Consulta solo Barra Fría: solo debe venir p1
+        barra_fria = obtener_comandas_kds(
+            estacion=Producto.ESTACION_BARRA_FRIA, estado_filtro="activos"
+        )
+        self.assertEqual(len(barra_fria), 1)
+        self.assertEqual(barra_fria[0]["pedido"].id, p1.id)
+
+        # Consulta solo Cocina Caliente: solo debe venir p2 y solo con el ítem de jalea
+        cocina_cal = obtener_comandas_kds(
+            estacion=Producto.ESTACION_COCINA_CALIENTE, estado_filtro="activos"
+        )
+        self.assertEqual(len(cocina_cal), 1)
+        self.assertEqual(cocina_cal[0]["pedido"].id, p2.id)
+        self.assertEqual(len(cocina_cal[0]["detalles"]), 1)
+        self.assertEqual(
+            cocina_cal[0]["detalles"][0].producto.nombre, "Jalea Mixta Real"
+        )
+
+        # Filtro de estado: pendientes vs cocinando
+        pendientes = obtener_comandas_kds(estacion=None, estado_filtro="pendientes")
+        self.assertEqual(len(pendientes), 1)
+        self.assertEqual(pendientes[0]["pedido"].id, p1.id)
+
+        cocinando = obtener_comandas_kds(estacion=None, estado_filtro="cocinando")
+        self.assertEqual(len(cocinando), 1)
+        self.assertEqual(cocinando[0]["pedido"].id, p2.id)
+
+    def test_kpis_kds_y_promedio_espera(self):
+        """PRB-57: resumen_kpis_kds calcula pendientes, cocinando, listos y alertas."""
+        Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("20.00"),
+        )
+        Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_COCINANDO,
+            total=Decimal("30.00"),
+        )
+        Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_LISTO,
+            total=Decimal("40.00"),
+        )
+
+        kpis = resumen_kpis_kds()
+        self.assertEqual(kpis["pendientes"], 1)
+        self.assertEqual(kpis["cocinando"], 1)
+        self.assertEqual(kpis["listos"], 1)
+        self.assertEqual(kpis["total_activos"], 2)
+
+    def test_kds_seguridad_staff_y_render_pantalla(self):
+        """PRB-57: /cocina/ exige usuario staff autenticado y renderiza comanda completa."""
+        # Anónimo redirige al login
+        resp_anon = self.client.get("/cocina/")
+        self.assertEqual(resp_anon.status_code, 302)
+        self.assertIn("/login/", resp_anon["Location"])
+
+        # No staff redirige
+        self.client.force_login(self.mozo)
+        resp_no_staff = self.client.get("/cocina/")
+        self.assertEqual(resp_no_staff.status_code, 302)
+
+        # Staff entra OK
+        self.client.force_login(self.cocinero)
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("48.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=2,
+            notas="Sin culantro",
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("96.00"),
+        )
+
+        resp_ok = self.client.get("/cocina/")
+        self.assertEqual(resp_ok.status_code, 200)
+        self.assertContains(resp_ok, "KDS Cocina")
+        self.assertContains(resp_ok, "Ceviche Clásico Casa Blanca")
+        self.assertContains(resp_ok, "Sin culantro")
+        self.assertContains(resp_ok, "Mesa 1")
+
+    def test_kds_avanzar_pedido_html_y_ajax(self):
+        """PRB-57: POST a avanzar soporta redirección HTML y respuesta AJAX."""
+        self.client.force_login(self.cocinero)
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("50.00"),
+        )
+
+        # 1. POST HTML estándar -> redirige a /cocina/
+        resp_html = self.client.post(
+            f"/cocina/pedidos/{ped.id}/avanzar/",
+            {"nuevo_estado": Pedido.ESTADO_COCINANDO},
+        )
+        self.assertEqual(resp_html.status_code, 302)
+        self.assertIn("/cocina/", resp_html["Location"])
+        ped.refresh_from_db()
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+        # 2. POST AJAX con header XMLHttpRequest -> JSON {ok: true, nuevo_estado: "LISTO"}
+        resp_ajax = self.client.post(
+            f"/cocina/pedidos/{ped.id}/avanzar/",
+            {"nuevo_estado": Pedido.ESTADO_LISTO},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(resp_ajax.status_code, 200)
+        datos = resp_ajax.json()
+        self.assertTrue(datos["ok"])
+        self.assertEqual(datos["nuevo_estado"], Pedido.ESTADO_LISTO)
+        ped.refresh_from_db()
+        self.assertEqual(ped.estado, Pedido.ESTADO_LISTO)
+
+    def test_kds_api_comandas_polling_json(self):
+        """PRB-57: GET /cocina/api/comandas/ devuelve JSON estructurado con comandas y KPIs."""
+        self.client.force_login(self.cocinero)
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=3,
+            estado=Pedido.ESTADO_COCINANDO,
+            total=Decimal("48.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=1,
+            notas="Ají limo picado",
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+        )
+
+        resp = self.client.get("/cocina/api/comandas/")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("kpis", data)
+        self.assertIn("comandas", data)
+        self.assertEqual(len(data["comandas"]), 1)
+        c0 = data["comandas"][0]
+        self.assertEqual(c0["id"], ped.id)
+        self.assertEqual(c0["estado"], Pedido.ESTADO_COCINANDO)
+        self.assertEqual(c0["items"][0]["nombre"], "Ceviche Clásico Casa Blanca")
+        self.assertEqual(c0["items"][0]["notas"], "Ají limo picado")
+        self.assertEqual(c0["items"][0]["estacion"], Producto.ESTACION_BARRA_FRIA)
+        self.assertEqual(c0["items"][0]["estado_item"], DetallePedido.ESTADO_ITEM_PENDIENTE)
+
+    def test_avance_individual_por_item_y_recalculo_comanda(self):
+        """PRB-57 / PRB-86: Cada plato avanza individualmente y el pedido recalcula su estado."""
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("64.00"),
+        )
+        d_ceviche = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+        d_chicha = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.chicha,
+            cantidad=1,
+            precio_unitario=Decimal("16.00"),
+            subtotal=Decimal("16.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # 1. Iniciar ceviche -> ítem COCINANDO, pedido pasa a COCINANDO
+        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_COCINANDO)
+        d_ceviche.refresh_from_db()
+        ped.refresh_from_db()
+        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_COCINANDO)
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+        # 2. Ceviche LISTO pero Chicha sigue PENDIENTE:
+        # Pedido sigue en COCINANDO (NO LISTO todavía)
+        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_LISTO)
+        d_ceviche.refresh_from_db()
+        d_chicha.refresh_from_db()
+        ped.refresh_from_db()
+        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+        self.assertEqual(d_chicha.estado_item, DetallePedido.ESTADO_ITEM_PENDIENTE)
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+        # 3. Chicha pasa a LISTO -> Todos los ítems están LISTO, pedido pasa a LISTO
+        avanzar_estado_item(d_chicha.id, DetallePedido.ESTADO_ITEM_LISTO)
+        d_chicha.refresh_from_db()
+        ped.refresh_from_db()
+        self.assertEqual(d_chicha.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+        self.assertEqual(ped.estado, Pedido.ESTADO_LISTO)
+
+        # 4. Ambos servidos -> Pedido pasa a SERVIDO
+        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_SERVIDO)
+        avanzar_estado_item(d_chicha.id, DetallePedido.ESTADO_ITEM_SERVIDO)
+        ped.refresh_from_db()
+        self.assertEqual(ped.estado, Pedido.ESTADO_SERVIDO)
+
+    def test_aislamiento_estaciones_no_avanza_otra_estacion(self):
+        """PRB-57: Marcar 'Listo' en Barra Fría NO marca la bebida ni toda la comanda."""
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("64.00"),
+        )
+        d_ceviche = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+        d_chicha = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.chicha,
+            cantidad=1,
+            precio_unitario=Decimal("16.00"),
+            subtotal=Decimal("16.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # Barra Fría avanza solo sus ítems a LISTO
+        avanzar_estado_comanda(
+            pedido_id=ped.id,
+            nuevo_estado=Pedido.ESTADO_LISTO,
+            estacion=Producto.ESTACION_BARRA_FRIA,
+        )
+        d_ceviche.refresh_from_db()
+        d_chicha.refresh_from_db()
+        ped.refresh_from_db()
+
+        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+        self.assertEqual(d_chicha.estado_item, DetallePedido.ESTADO_ITEM_PENDIENTE)
+        # La comanda NO debe estar como LISTO porque la bebida aún no se prepara
+        self.assertNotEqual(ped.estado, Pedido.ESTADO_LISTO)
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+    def test_kds_avanzar_item_endpoint_html_y_ajax(self):
+        """PRB-57: POST a /cocina/items/<id>/avanzar/ soporta redirección y AJAX JSON."""
+        self.client.force_login(self.cocinero)
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("48.00"),
+        )
+        det = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=1,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # 1. POST HTML
+        resp_html = self.client.post(
+            f"/cocina/items/{det.id}/avanzar/",
+            {"nuevo_estado": DetallePedido.ESTADO_ITEM_COCINANDO},
+        )
+        self.assertEqual(resp_html.status_code, 302)
+        det.refresh_from_db()
+        self.assertEqual(det.estado_item, DetallePedido.ESTADO_ITEM_COCINANDO)
+
+        # 2. POST AJAX
+        resp_ajax = self.client.post(
+            f"/cocina/items/{det.id}/avanzar/",
+            {"nuevo_estado": DetallePedido.ESTADO_ITEM_LISTO},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(resp_ajax.status_code, 200)
+        data = resp_ajax.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["nuevo_estado_item"], DetallePedido.ESTADO_ITEM_LISTO)
+        det.refresh_from_db()
+        self.assertEqual(det.estado_item, DetallePedido.ESTADO_ITEM_LISTO)
+
+    def test_fk_usuario_id_seguro_postgres(self):
+        """PRB-57: Valida que auth_user.id o IDs inválidos no rompan la FK en PostgreSQL."""
+        from catalogo.kds_service import _validar_fk_usuario_id
+        from catalogo.views import resolver_usuario_operativo_id
+
+        # 1. Con un auth_user de django
+        usuario_resuelto = resolver_usuario_operativo_id(self.cocinero)
+        self.assertTrue(usuario_resuelto is None or isinstance(usuario_resuelto, int))
+
+        # 2. _validar_fk_usuario_id con ID inexistente en entorno PostgreSQL
+        with patch("django.db.connection.vendor", "postgresql"):
+            self.assertIsNone(_validar_fk_usuario_id(999999))
+
+    def test_kds_descuento_stock_automatico_sin_typeerror(self):
+        """PRB-57: Valida avance KDS con descuento de stock multi-ítem y registrado_por."""
+        self.ceviche.stock_disponible = 25
+        self.ceviche.save()
+        self.jalea.stock_disponible = 15
+        self.jalea.save()
+
+        ped = Pedido.objects.create(
+            mesa=self.mesa1,
+            mozo_id=1,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("161.00"),
+        )
+        det_ceviche = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.ceviche,
+            cantidad=2,
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("96.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+        det_jalea = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.jalea,
+            cantidad=1,
+            precio_unitario=Decimal("65.00"),
+            subtotal=Decimal("65.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
+
+        # Pasar instancia de Pedido en vez de int lanza TypeError explícito
+        with self.assertRaises(TypeError):
+            descontar_stock_pedido(ped)
+
+        # 1. Al pasar a COCINANDO en KDS, se descuenta el stock y se registra el autor
+        avanzar_estado_item(
+            det_ceviche.id,
+            DetallePedido.ESTADO_ITEM_COCINANDO,
+            usuario_id=1,
+            motivo="Inicio preparación ceviche",
+        )
+        self.ceviche.refresh_from_db()
+        self.jalea.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 23)
+        self.assertEqual(self.jalea.stock_disponible, 14)
+
+        # Verificar movimientos de stock generados y campo registrado_por
+        movs = list(MovimientoStock.objects.filter(pedido=ped).order_by("producto_id"))
+        self.assertEqual(len(movs), 2)
+        self.assertEqual(movs[0].cantidad, 2)
+        self.assertEqual(movs[0].tipo, MovimientoStock.TIPO_SALIDA_VENTA)
+        self.assertEqual(movs[0].stock_anterior, 25)
+        self.assertEqual(movs[0].stock_resultante, 23)
+        self.assertIn("kds", movs[0].registrado_por)
+        self.assertEqual(movs[1].cantidad, 1)
+        self.assertEqual(movs[1].stock_resultante, 14)
+        self.assertIn("kds", movs[1].registrado_por)
+
+        # 2. Al pasar a LISTO ambos ítems, es idempotente y no descuenta doble
+        avanzar_estado_item(
+            det_ceviche.id,
+            DetallePedido.ESTADO_ITEM_LISTO,
+            usuario_id=1,
+        )
+        avanzar_estado_item(
+            det_jalea.id,
+            DetallePedido.ESTADO_ITEM_LISTO,
+            usuario_id=1,
+        )
+        self.ceviche.refresh_from_db()
+        self.jalea.refresh_from_db()
+        self.assertEqual(self.ceviche.stock_disponible, 23)
+        self.assertEqual(self.jalea.stock_disponible, 14)
+        self.assertEqual(MovimientoStock.objects.filter(pedido=ped).count(), 2)

@@ -32,6 +32,18 @@
           <span>Dashboard</span>
         </a>
 
+        <div class="nav-section-label">Operación en Vivo</div>
+        <a href="{% url 'catalogo:kds_cocina' %}" class="nav-link {% if nav_active == 'cocina' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8h1a4 4 0 0 1 0 8h-1"/>
+            <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/>
+            <line x1="6" y1="1" x2="6" y2="4"/>
+            <line x1="10" y1="1" x2="10" y2="4"/>
+            <line x1="14" y1="1" x2="14" y2="4"/>
+          </svg>
+          <span>KDS Cocina</span>
+        </a>
+
         <div class="nav-section-label">Caja y Finanzas</div>
         <a href="{% url 'catalogo:caja' %}" class="nav-link {% if nav_active == 'caja' %}is-active{% endif %}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -77,6 +89,15 @@
           <span>Pesca del Día</span>
         </a>
 
+        <a href="{% url 'catalogo:stock_dia' %}" class="nav-link {% if nav_active == 'stock' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+            <path d="m3.3 7 8.7 5 8.7-5"/>
+            <path d="M12 22V12"/>
+          </svg>
+          <span>Stock del Día</span>
+        </a>
+
         <a href="{% url 'catalogo:categorias' %}" class="nav-link {% if nav_active == 'categorias' %}is-active{% endif %}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 6h16"/>
@@ -87,6 +108,16 @@
         </a>
 
         <div class="nav-section-label">Configuración</div>
+        <a href="{% url 'catalogo:personal' %}" class="nav-link {% if nav_active == 'personal' %}is-active{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          <span>Personal y PIN</span>
+        </a>
+
         <a href="{% url 'admin:index' %}" class="nav-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>

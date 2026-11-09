@@ -1619,3 +1619,363 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Stock del Día / Inventario Reducido (PRB-59)
+   ========================================================================== */
+.stock-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-pill-ok {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.stock-pill-low {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.stock-pill-zero {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.stock-pill-free {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.mov-tipo-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.mov-tipo-carga_diaria {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.mov-tipo-salida_venta {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.mov-tipo-reversion {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+}
+
+.mov-tipo-ajuste {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+/* ==========================================================================
+   KDS DE COCINA (PRB-57 · P-10)
+   Diseño de alta visibilidad para pantallas táctiles y monitores de cocina
+   ========================================================================== */
+
+.kds-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.kds-station-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: #ffffff;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.kds-station-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.kds-station-pill:hover {
+  background: #e2e8f0;
+  color: var(--text-primary);
+}
+
+.kds-station-pill.is-active {
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.2);
+}
+
+.kds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.kds-card {
+  background: #ffffff;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kds-card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+/* Semáforo SLA en cabecera de la comanda */
+.kds-card-header {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid transparent;
+}
+
+.kds-card.sla-normal {
+  border-color: #a7f3d0;
+}
+.kds-card.sla-normal .kds-card-header {
+  background: #f0fdf4;
+  border-bottom-color: #bbf7d0;
+}
+
+.kds-card.sla-alerta {
+  border-color: #fde68a;
+}
+.kds-card.sla-alerta .kds-card-header {
+  background: #fffbeb;
+  border-bottom-color: #fef08a;
+}
+
+.kds-card.sla-critico {
+  border-color: #fca5a5;
+  animation: kdsPulseBorder 2s infinite ease-in-out;
+}
+.kds-card.sla-critico .kds-card-header {
+  background: #fef2f2;
+  border-bottom-color: #fecaca;
+}
+
+@keyframes kdsPulseBorder {
+  0%, 100% { border-color: #fca5a5; }
+  50% { border-color: #dc2626; }
+}
+
+.kds-card-table {
+  font-size: 17px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.kds-card-order-id {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-left: 6px;
+}
+
+.kds-sla-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.kds-card.sla-normal .kds-sla-timer {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.kds-card.sla-alerta .kds-sla-timer {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.kds-card.sla-critico .kds-sla-timer {
+  background: #fee2e2;
+  color: #b91c1c;
+  animation: kdsBlinkTimer 1s infinite alternate;
+}
+
+@keyframes kdsBlinkTimer {
+  from { opacity: 1; }
+  to { opacity: 0.65; }
+}
+
+.kds-card-body {
+  padding: 14px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kds-item-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.kds-item-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.kds-item-qty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  background: #0f172a;
+  color: #ffffff;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.kds-item-info {
+  flex: 1;
+}
+
+.kds-item-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.kds-item-notes {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border-left: 3px solid #f59e0b;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+/* Badges de Estación */
+.badge-barra-fria {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+.badge-cocina-caliente {
+  background: #ffedd5;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
+.badge-bebidas {
+  background: #f3e8ff;
+  color: #7e22ce;
+  border: 1px solid #e9d5ff;
+}
+
+.badge-postres {
+  background: #fef9c3;
+  color: #a16207;
+  border: 1px solid #fef08a;
+}
+
+.kds-card-footer {
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.btn-kds-action {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.btn-kds-iniciar {
+  background: #2563eb;
+  color: #ffffff;
+}
+.btn-kds-iniciar:hover {
+  background: #1d4ed8;
+}
+
+.btn-kds-listo {
+  background: #059669;
+  color: #ffffff;
+}
+.btn-kds-listo:hover {
+  background: #047857;
+}
+
+.btn-kds-servir {
+  background: #475569;
+  color: #ffffff;
+}
+.btn-kds-servir:hover {
+  background: #334155;
+}
+

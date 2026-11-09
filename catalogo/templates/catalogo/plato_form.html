@@ -49,6 +49,20 @@
         {% for err in form.precio.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
       </div>
 
+      <div class="form-group">
+        <label class="form-label" for="{{ form.stock_disponible.id_for_label }}">Cupo diario (porciones)</label>
+        {{ form.stock_disponible }}
+        <span class="form-help">Déjalo vacío para stock libre/ilimitado.</span>
+        {% for err in form.stock_disponible.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="{{ form.stock_minimo.id_for_label }}">Alerta de stock mínimo</label>
+        {{ form.stock_minimo }}
+        <span class="form-help">Muestra aviso ámbar cuando queden pocas porciones.</span>
+        {% for err in form.stock_minimo.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
       <div class="form-group full">
         <label class="form-label" for="{{ form.descripcion.id_for_label }}">Descripción del plato</label>
         {{ form.descripcion }}

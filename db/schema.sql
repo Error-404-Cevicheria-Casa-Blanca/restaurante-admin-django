@@ -37,6 +37,8 @@ CREATE TABLE producto (
     descripcion TEXT,
     precio NUMERIC(10,2) NOT NULL CHECK (precio > 0),
     disponible BOOLEAN NOT NULL DEFAULT TRUE,
+    stock_disponible INT CHECK (stock_disponible IS NULL OR stock_disponible >= 0),
+    stock_minimo INT NOT NULL DEFAULT 0 CHECK (stock_minimo >= 0),
     categoria_id INT NOT NULL REFERENCES categoria(id) ON DELETE RESTRICT,
     imagen_url VARCHAR(255)
 );
@@ -63,8 +65,14 @@ CREATE TABLE detalle_pedido (
     cantidad INT NOT NULL CHECK (cantidad >= 1),
     notas VARCHAR(255),
     modificadores_json TEXT,
-    subtotal NUMERIC(10,2) NOT NULL CHECK (subtotal >= 0)
+    subtotal NUMERIC(10,2) NOT NULL CHECK (subtotal >= 0),
+    estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+        CHECK (estado_item IN ('PENDIENTE','COCINANDO','EN_PREPARACION','LISTO','SERVIDO','ANULADO')),
+    estacion VARCHAR(30) NOT NULL DEFAULT 'COCINA_CALIENTE',
+    anulado_motivo VARCHAR(255)
 );
+
+CREATE INDEX idx_detalle_estado_estacion ON detalle_pedido(estado_item, estacion);
 
 -- Índices estratégicos para rendimiento y Foreign Keys
 CREATE INDEX idx_pedido_mesa_estado ON pedido(mesa_id, estado);
@@ -162,4 +170,22 @@ CREATE TABLE token_revocado (
     fecha_revocacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- =============================================================================
+-- TABLA: movimiento_stock (Kardex auditable de stock diario, ventas y reversiones - PRB-59)
+-- =============================================================================
+CREATE TABLE movimiento_stock (
+    id SERIAL PRIMARY KEY,
+    producto_id INT NOT NULL REFERENCES producto(id) ON DELETE CASCADE,
+    pedido_id INT REFERENCES pedido(id) ON DELETE SET NULL,
+    tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('CARGA_DIARIA', 'SALIDA_VENTA', 'REVERSION', 'AJUSTE')),
+    cantidad INT NOT NULL CHECK (cantidad >= 0),
+    stock_anterior INT,
+    stock_resultante INT CHECK (stock_resultante IS NULL OR stock_resultante >= 0),
+    motivo VARCHAR(255),
+    registrado_por VARCHAR(100),
+    fecha TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_movimiento_stock_producto ON movimiento_stock(producto_id, fecha);
+CREATE INDEX idx_movimiento_stock_pedido ON movimiento_stock(pedido_id, tipo);
 

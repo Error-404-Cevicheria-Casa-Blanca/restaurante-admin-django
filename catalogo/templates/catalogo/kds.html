@@ -1,0 +1,297 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}KDS Cocina · Comandas en Tiempo Real{% endblock %}
+
+{% block content %}
+<div class="kds-container">
+  <!-- Cabecera del KDS -->
+  <header class="page-header" style="margin-bottom:8px;">
+    <div>
+      <h1 class="page-title" style="display:flex;align-items:center;gap:10px;">
+        <span>KDS Cocina · Comandas en Vivo</span>
+        <span id="kds-live-indicator" class="badge badge-success" style="font-size:12px;padding:3px 8px;font-weight:700;">
+          🟢 EN VIVO (6s)
+        </span>
+      </h1>
+      <p class="page-subtitle">
+        Monitoreo y avance de preparación por estaciones con semáforo SLA (PRB-57 · P-10).
+      </p>
+    </div>
+    <div class="page-actions" style="display:flex;align-items:center;gap:10px;">
+      <a href="{% url 'catalogo:kds_cocina' %}" class="btn btn-outline" title="Refrescar vista manualmente">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+        </svg>
+        Refrescar
+      </a>
+    </div>
+  </header>
+
+  <!-- Métricas Operativas de Cocina (KPIs) -->
+  <section class="kpi-grid" style="grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));">
+    <article class="kpi-card">
+      <div class="kpi-label">Pendientes</div>
+      <div id="kpi-pendientes" class="kpi-value" style="color:#2563eb;">{{ kpis.pendientes }}</div>
+      <div class="kpi-foot">Recién llegadas de tablet</div>
+    </article>
+
+    <article class="kpi-card">
+      <div class="kpi-label">En Preparación</div>
+      <div id="kpi-cocinando" class="kpi-value" style="color:#f59e0b;">{{ kpis.cocinando }}</div>
+      <div class="kpi-foot">Cocinando en estaciones</div>
+    </article>
+
+    <article class="kpi-card">
+      <div class="kpi-label">Listas para Servir</div>
+      <div id="kpi-listos" class="kpi-value" style="color:#059669;">{{ kpis.listos }}</div>
+      <div class="kpi-foot">Esperando retiro de mozo</div>
+    </article>
+
+    <article class="kpi-card">
+      <div class="kpi-label">Alertas SLA (&ge; 10m)</div>
+      <div id="kpi-alertas" class="kpi-value" style="color:{% if kpis.alertas_sla > 0 %}#dc2626{% else %}#059669{% endif %};">
+        {{ kpis.alertas_sla }}
+      </div>
+      <div class="kpi-foot">Demoras o pedidos críticos</div>
+    </article>
+
+    <article class="kpi-card">
+      <div class="kpi-label">Tiempo Promedio</div>
+      <div id="kpi-promedio" class="kpi-value">{{ kpis.promedio_espera_minutos }} min</div>
+      <div class="kpi-foot">Espera activa del turno</div>
+    </article>
+  </section>
+
+  <!-- Selector de Estaciones de Cocina -->
+  <nav class="kds-station-nav" aria-label="Filtro de estación de cocina">
+    <span class="card-meta" style="font-weight:700;margin-right:4px;">Estación:</span>
+    <a href="{% url 'catalogo:kds_cocina' %}?estado={{ estado_activo }}"
+       class="kds-station-pill {% if not estacion_activa %}is-active{% endif %}">
+      Todas las Estaciones
+    </a>
+    {% for codigo, info in estaciones_info.items %}
+    <a href="{% url 'catalogo:kds_cocina' %}?estacion={{ codigo }}&estado={{ estado_activo }}"
+       class="kds-station-pill {% if estacion_activa == codigo %}is-active{% endif %}">
+      {{ info.titulo }}
+    </a>
+    {% endfor %}
+  </nav>
+
+  <!-- Selector de Estado de Comanda -->
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:2px;">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <a href="{% url 'catalogo:kds_cocina' %}?estacion={{ estacion_activa }}&estado=activos"
+         class="btn btn-sm {% if estado_activo == 'activos' %}btn-primary{% else %}btn-outline{% endif %}">
+        Activos en Cocina
+      </a>
+      <a href="{% url 'catalogo:kds_cocina' %}?estacion={{ estacion_activa }}&estado=pendientes"
+         class="btn btn-sm {% if estado_activo == 'pendientes' %}btn-primary{% else %}btn-outline{% endif %}">
+        Pendientes
+      </a>
+      <a href="{% url 'catalogo:kds_cocina' %}?estacion={{ estacion_activa }}&estado=cocinando"
+         class="btn btn-sm {% if estado_activo == 'cocinando' %}btn-primary{% else %}btn-outline{% endif %}">
+        Cocinando
+      </a>
+      <a href="{% url 'catalogo:kds_cocina' %}?estacion={{ estacion_activa }}&estado=listos"
+         class="btn btn-sm {% if estado_activo == 'listos' %}btn-primary{% else %}btn-outline{% endif %}">
+        Listos
+      </a>
+      <a href="{% url 'catalogo:kds_cocina' %}?estacion={{ estacion_activa }}&estado=historico"
+         class="btn btn-sm {% if estado_activo == 'historico' %}btn-primary{% else %}btn-outline{% endif %}">
+        Historial de Hoy
+      </a>
+    </div>
+    <div class="card-meta">
+      Mostrando <strong id="kds-conteo-comandas">{{ comandas|length }}</strong> comanda(s)
+    </div>
+  </div>
+
+  <!-- Rejilla de Tarjetas de Comanda -->
+  <main id="kds-cards-container" class="kds-grid" style="margin-top:8px;">
+    {% if comandas %}
+      {% for c in comandas %}
+      <article class="kds-card {{ c.sla_class }}" data-pedido-id="{{ c.pedido.id }}" data-minutos="{{ c.minutos }}">
+        <header class="kds-card-header">
+          <div>
+            <span class="kds-card-table">{{ c.origen }}</span>
+            <span class="kds-card-order-id">#{{ c.pedido.id }}</span>
+          </div>
+          <div class="kds-sla-timer" title="Tiempo desde emisión: {{ c.sla_label }}">
+            ⏱ <span class="timer-digits">{{ c.tiempo_formateado }}</span>
+          </div>
+        </header>
+
+        <div class="kds-card-body">
+          <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#64748b;margin-bottom:6px;">
+            <span>Mozo #{{ c.pedido.mozo_id }}</span>
+            <span class="badge {% if c.pedido.estado == 'PENDIENTE' %}badge-warning{% elif c.pedido.estado == 'COCINANDO' %}badge-primary{% elif c.pedido.estado == 'LISTO' %}badge-success{% else %}badge-outline{% endif %}">
+              {{ c.pedido.get_estado_display }}
+            </span>
+          </div>
+
+          <div class="kds-items-list">
+            {% for det in c.detalles %}
+            <div class="kds-item-row" data-detalle-id="{{ det.id }}" style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 0;border-bottom:1px solid #f1f5f9;">
+              <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+                <span class="kds-item-qty" style="font-weight:700;background:#e2e8f0;border-radius:4px;padding:2px 6px;font-size:12px;flex-shrink:0;">{{ det.cantidad }}</span>
+                <div class="kds-item-info" style="overflow:hidden;text-overflow:ellipsis;">
+                  <div class="kds-item-name" style="font-weight:600;font-size:13px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ det.producto.nombre }}</div>
+                  {% if det.notas %}
+                  <div class="kds-item-notes" style="font-size:11px;color:#64748b;font-style:italic;">Nota: {{ det.notas }}</div>
+                  {% endif %}
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                <span class="badge {{ det.producto.estacion|lower }}" style="font-size:10px;padding:2px 6px;">
+                  {{ det.estacion_display }}
+                </span>
+                <span class="badge {% if det.estado_item == 'PENDIENTE' %}badge-warning{% elif det.estado_item == 'COCINANDO' or det.estado_item == 'EN_PREPARACION' %}badge-primary{% elif det.estado_item == 'LISTO' %}badge-success{% elif det.estado_item == 'SERVIDO' %}badge-outline{% else %}badge-danger{% endif %}" style="font-size:10px;padding:2px 6px;">
+                  {{ det.get_estado_item_display }}
+                </span>
+                {% if det.proxima_accion %}
+                <form method="post" action="{% url 'catalogo:kds_avanzar_item' det.id %}" class="kds-item-form" style="margin:0;display:inline;">
+                  {% csrf_token %}
+                  <input type="hidden" name="nuevo_estado" value="{{ det.proxima_accion.target_estado }}">
+                  <input type="hidden" name="estacion" value="{{ estacion_activa }}">
+                  <input type="hidden" name="estado" value="{{ estado_activo }}">
+                  <button type="submit" class="btn btn-sm btn-outline {{ det.proxima_accion.btn_class }}" style="padding:2px 7px;font-size:11px;font-weight:600;line-height:1.2;" title="Avanzar a {{ det.proxima_accion.label }}">
+                    {{ det.proxima_accion.label }}
+                  </button>
+                </form>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        {% if c.proxima_accion %}
+        <footer class="kds-card-footer">
+          <form method="post" action="{% url 'catalogo:kds_avanzar_pedido' c.pedido.id %}" class="kds-action-form" style="width:100%;">
+            {% csrf_token %}
+            <input type="hidden" name="nuevo_estado" value="{{ c.proxima_accion.target_estado }}">
+            <input type="hidden" name="estacion" value="{{ estacion_activa }}">
+            <input type="hidden" name="estado" value="{{ estado_activo }}">
+            <button type="submit" class="btn-kds-action {{ c.proxima_accion.btn_class }}">
+              {% if estacion_activa %}Avanzar {{ estacion_activa|title }}: {% endif %}{{ c.proxima_accion.label }}
+            </button>
+          </form>
+        </footer>
+        {% endif %}
+      </article>
+      {% endfor %}
+    {% else %}
+      <section class="card" style="grid-column:1 / -1;text-align:center;padding:48px 24px;">
+        <h3 style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:6px;">
+          Cocina sin pedidos pendientes en esta sección
+        </h3>
+        <p class="card-meta">
+          Todas las comandas de esta estación se encuentran atendidas o despachadas.
+        </p>
+      </section>
+    {% endif %}
+  </main>
+</div>
+
+<!-- Script en vivo para reloj KDS y actualización silenciosa AJAX -->
+<script>
+(function() {
+  const estacionActiva = "{{ estacion_activa|escapejs }}";
+  const estadoActivo = "{{ estado_activo|escapejs }}";
+  const apiUrl = "{% url 'catalogo:kds_api_comandas' %}?estacion=" + encodeURIComponent(estacionActiva) + "&estado=" + encodeURIComponent(estadoActivo);
+
+  // 1. Cronómetro de segundos local para actualizar en vivo el display mm:ss
+  function incrementarTimers() {
+    document.querySelectorAll(".kds-card").forEach(function(card) {
+      const timerDigits = card.querySelector(".timer-digits");
+      if (!timerDigits) return;
+      const partes = timerDigits.textContent.trim().split(":");
+      if (partes.length === 2) {
+        let mins = parseInt(partes[0], 10) || 0;
+        let segs = parseInt(partes[1], 10) || 0;
+        segs += 1;
+        if (segs >= 60) {
+          mins += 1;
+          segs = 0;
+        }
+        timerDigits.textContent = String(mins).padStart(2, "0") + ":" + String(segs).padStart(2, "0");
+
+        // Actualizar semáforo SLA visualmente si cruza los umbrales
+        if (mins >= 20) {
+          card.classList.remove("sla-normal", "sla-alerta");
+          card.classList.add("sla-critico");
+        } else if (mins >= 10) {
+          card.classList.remove("sla-normal", "sla-critico");
+          card.classList.add("sla-alerta");
+        }
+      }
+    });
+  }
+  setInterval(incrementarTimers, 1000);
+
+  // 2. Polling silencioso cada 6 segundos para traer nuevas comandas y actualizar KPIs
+  async function sincronizarKds() {
+    try {
+      const resp = await fetch(apiUrl, { credentials: "same-origin" });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data.ok) return;
+
+      // Actualizar indicadores KPI
+      if (data.kpis) {
+        document.getElementById("kpi-pendientes").textContent = data.kpis.pendientes;
+        document.getElementById("kpi-cocinando").textContent = data.kpis.cocinando;
+        document.getElementById("kpi-listos").textContent = data.kpis.listos;
+        const alertEl = document.getElementById("kpi-alertas");
+        alertEl.textContent = data.kpis.alertas_sla;
+        alertEl.style.color = data.kpis.alertas_sla > 0 ? "#dc2626" : "#059669";
+        document.getElementById("kpi-promedio").textContent = data.kpis.promedio_espera_minutos + " min";
+      }
+
+      // Si la cantidad de comandas o IDs cambió, recargar suavemente
+      const conteoEl = document.getElementById("kds-conteo-comandas");
+      const idsActuales = Array.from(document.querySelectorAll(".kds-card")).map(el => el.getAttribute("data-pedido-id")).join(",");
+      const idsNuevos = (data.comandas || []).map(c => String(c.id)).join(",");
+
+      if (idsActuales !== idsNuevos) {
+        // Refresco limpio para reflejar nuevas o terminadas comandas
+        window.location.reload();
+      }
+    } catch (e) {
+      console.warn("Fallo temporal de polling KDS:", e);
+    }
+  }
+  setInterval(sincronizarKds, 6000);
+
+  // 3. Manejo interactivo AJAX de botones de avance (ítems y comandas)
+  document.addEventListener("submit", async function(e) {
+    const form = e.target.closest(".kds-item-form, .kds-action-form");
+    if (!form) return;
+    e.preventDefault();
+    const btn = form.querySelector("button[type='submit']");
+    if (btn) btn.disabled = true;
+
+    try {
+      const resp = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json"
+        },
+        credentials: "same-origin"
+      });
+      if (resp.ok) {
+        // Sincronizar de inmediato el estado
+        await sincronizarKds();
+        window.location.reload();
+      } else {
+        form.submit();
+      }
+    } catch (err) {
+      form.submit();
+    }
+  });
+})();
+</script>
+{% endblock %}

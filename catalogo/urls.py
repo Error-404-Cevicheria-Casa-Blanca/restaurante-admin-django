@@ -58,4 +58,56 @@ urlpatterns = [
     path("caja/cerrar/", views.cerrar_caja, name="caja_cerrar"),
     # Reportes básicos de ventas y medios de pago (PRB-61)
     path("reportes/", views.reportes_ventas, name="reportes"),
+    # Inventario reducido: stock del día, descuento y reversión (PRB-59)
+    path("stock-del-dia/", views.stock_del_dia, name="stock_dia"),
+    path(
+        "platos/<int:pk>/fijar-stock/",
+        views.fijar_stock_plato,
+        name="plato_fijar_stock",
+    ),
+    path(
+        "platos/<int:pk>/ajustar-stock/",
+        views.ajustar_stock_plato,
+        name="plato_ajustar_stock",
+    ),
+    path(
+        "stock-del-dia/carga-masiva/",
+        views.carga_masiva_stock,
+        name="stock_carga_masiva",
+    ),
+    # Personal operativo, roles, PIN BCrypt y datos reales (PRB-52 / PRB-12)
+    path("personal/", views.personal_operativo, name="personal"),
+    path("personal/nuevo/", views.crear_usuario_operativo, name="personal_create"),
+    path(
+        "personal/<int:pk>/credenciales/",
+        views.actualizar_credenciales_operativas,
+        name="personal_update_credentials",
+    ),
+    path(
+        "personal/<int:pk>/desbloquear/",
+        views.desbloquear_usuario_operativo,
+        name="personal_unlock",
+    ),
+    path(
+        "personal/sincronizar-produccion/",
+        views.sincronizar_seeds_produccion_view,
+        name="personal_sync_seeds",
+    ),
+    # KDS de cocina en tiempo real: estaciones y semáforo SLA (PRB-57 · P-10)
+    path("cocina/", views.kds_cocina, name="kds_cocina"),
+    path(
+        "cocina/pedidos/<int:pk>/avanzar/",
+        views.kds_avanzar_pedido,
+        name="kds_avanzar_pedido",
+    ),
+    path(
+        "cocina/items/<int:detalle_id>/avanzar/",
+        views.kds_avanzar_item,
+        name="kds_avanzar_item",
+    ),
+    path(
+        "cocina/api/comandas/",
+        views.kds_api_comandas,
+        name="kds_api_comandas",
+    ),
 ]

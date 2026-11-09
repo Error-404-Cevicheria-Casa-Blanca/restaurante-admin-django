@@ -6,8 +6,9 @@ from functools import wraps
 
 from django.contrib import messages
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.db import IntegrityError, connection, transaction
-from django.db.models import Avg, Count, Max, Min, ProtectedError, Q, Sum
+from django.core.exceptions import ValidationError
+from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db.models import Avg, Count, F, Max, Min, ProtectedError, Q, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -15,9 +16,44 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from .forms import AperturaCajaForm, CategoriaForm, CierreCajaForm, ProductoForm
-from .models import Categoria, Mesa, Pago, Pedido, Producto, SesionCaja
+from .forms import (
+    AperturaCajaForm,
+    CategoriaForm,
+    CierreCajaForm,
+    ProductoForm,
+    UsuarioOperativoForm,
+)
+from .kds_service import (
+    ESTACIONES_INFO,
+    avanzar_estado_comanda,
+    avanzar_estado_item,
+    obtener_comandas_kds,
+    resumen_kpis_kds,
+    serializar_comandas_json,
+)
+from .models import (
+    Categoria,
+    DetallePedido,
+    Mesa,
+    MovimientoStock,
+    Pago,
+    Pedido,
+    Producto,
+    Rol,
+    SesionCaja,
+    Usuario,
+)
+from .produccion_seeds import (
+    ROLES_OFICIALES,
+    auditar_datos_produccion,
+    cargar_datos_produccion,
+)
 from .sqlite_bootstrap import asegurar_tablas_sqlite, poblar_carta_ejemplo
+from .stock_service import (
+    ajustar_stock_producto,
+    fijar_stock_diario,
+    sincronizar_stock_con_pedidos,
+)
 
 
 def staff_required(view_func):
@@ -490,11 +526,27 @@ def toggle_disponibilidad_plato(request, pk):
 
     valor_explicito = request.POST.get("disponible")
     if valor_explicito in ("true", "1", "on"):
-        plato.disponible = True
+        nuevo_disp = True
     elif valor_explicito in ("false", "0", "off"):
-        plato.disponible = False
+        nuevo_disp = False
     else:
-        plato.disponible = not plato.disponible
+        nuevo_disp = not plato.disponible
+
+    if (
+        nuevo_disp
+        and plato.stock_disponible is not None
+        and plato.stock_disponible == 0
+    ):
+        msg = (
+            f"«{plato.nombre}» tiene 0 porciones en el stock del día. "
+            "Carga porciones mayores a 0 o pásalo a modo libre para activarlo."
+        )
+        if _es_peticion_json(request):
+            return JsonResponse({"ok": False, "error": msg}, status=409)
+        messages.warning(request, msg)
+        return redirect(_url_retorno_segura(request, "catalogo:platos_list"))
+
+    plato.disponible = nuevo_disp
     plato.save(update_fields=["disponible"])
 
     estado_texto = "DISPONIBLE" if plato.disponible else "AGOTADO"
@@ -590,7 +642,7 @@ def accion_masiva_platos(request):
 
     qs = Producto.objects.filter(pk__in=ids)
     if accion == "marcar_disponible":
-        actualizados = qs.update(disponible=True)
+        actualizados = qs.exclude(stock_disponible=0).update(disponible=True)
         messages.success(
             request,
             f"{actualizados} plato(s) marcados como DISPONIBLES (pesca del día).",
@@ -611,6 +663,7 @@ def accion_masiva_platos(request):
 def pesca_del_dia(request):
     """Tablero operativo diario para control rápido de disponibilidad y precios."""
     asegurar_tablas_sqlite()
+    _sincronizar_stock_seguro()
     categorias = (
         Categoria.objects.prefetch_related("productos")
         .annotate(
@@ -639,7 +692,12 @@ def cambiar_estado_categoria(request, pk):
     asegurar_tablas_sqlite()
     categoria = get_object_or_404(Categoria, pk=pk)
     estado = request.POST.get("estado") == "disponible"
-    actualizados = categoria.productos.update(disponible=estado)
+    if estado:
+        actualizados = categoria.productos.exclude(stock_disponible=0).update(
+            disponible=True
+        )
+    else:
+        actualizados = categoria.productos.update(disponible=False)
     etiqueta = "DISPONIBLES" if estado else "AGOTADOS"
     messages.success(
         request,
@@ -1333,3 +1391,640 @@ def reportes_ventas(request):
         "total_sesiones_dia": total_sesiones_dia,
     }
     return render(request, "catalogo/reportes.html", context)
+
+
+def _sincronizar_stock_seguro():
+    """Ejecuta conciliación idempotente de stock con pedidos POS si las tablas existen."""
+    try:
+        return sincronizar_stock_con_pedidos()
+    except DatabaseError:
+        return {"descuentos": 0, "reversiones": 0}
+
+
+@staff_required
+def stock_del_dia(request):
+    """Tablero operativo de Inventario Reducido / Stock del Día (PRB-59)."""
+    asegurar_tablas_sqlite()
+    resultado_sync = _sincronizar_stock_seguro()
+
+    categoria_filtro = (request.GET.get("categoria") or "").strip()
+    modo_filtro = (request.GET.get("modo") or "todos").strip()
+    busqueda = (request.GET.get("q") or "").strip()
+
+    platos_qs = Producto.objects.select_related("categoria").order_by(
+        "categoria__id", "nombre"
+    )
+    if busqueda:
+        platos_qs = platos_qs.filter(
+            Q(nombre__icontains=busqueda) | Q(categoria__nombre__icontains=busqueda)
+        )
+    categoria_activa = None
+    if categoria_filtro.isdigit():
+        categoria_activa = int(categoria_filtro)
+        platos_qs = platos_qs.filter(categoria_id=categoria_activa)
+
+    if modo_filtro == "con_cupo":
+        platos_qs = platos_qs.filter(stock_disponible__isnull=False)
+    elif modo_filtro == "bajo_stock":
+        platos_qs = platos_qs.filter(
+            disponible=True,
+            stock_disponible__isnull=False,
+            stock_disponible__gt=0,
+            stock_minimo__gt=0,
+            stock_disponible__lte=F("stock_minimo"),
+        )
+    elif modo_filtro == "agotados":
+        platos_qs = platos_qs.filter(Q(disponible=False) | Q(stock_disponible=0))
+    elif modo_filtro == "ilimitados":
+        platos_qs = platos_qs.filter(stock_disponible__isnull=True)
+
+    todos_qs = Producto.objects.all()
+    total_platos = todos_qs.count()
+    con_cupo = todos_qs.filter(stock_disponible__isnull=False).count()
+    ilimitados = todos_qs.filter(stock_disponible__isnull=True).count()
+    agotados = todos_qs.filter(Q(disponible=False) | Q(stock_disponible=0)).count()
+    bajo_stock = todos_qs.filter(
+        disponible=True,
+        stock_disponible__isnull=False,
+        stock_disponible__gt=0,
+        stock_minimo__gt=0,
+        stock_disponible__lte=F("stock_minimo"),
+    ).count()
+    porciones_totales = (
+        todos_qs.filter(stock_disponible__gt=0).aggregate(s=Sum("stock_disponible"))[
+            "s"
+        ]
+        or 0
+    )
+
+    try:
+        movimientos_recientes = list(
+            MovimientoStock.objects.select_related("producto", "pedido").order_by(
+                "-fecha", "-id"
+            )[:30]
+        )
+    except DatabaseError:
+        movimientos_recientes = []
+
+    categorias = list(
+        Categoria.objects.annotate(total_platos=Count("productos")).order_by("id")
+    )
+
+    context = {
+        "nav_active": "stock",
+        "platos": list(platos_qs),
+        "categorias": categorias,
+        "categoria_activa": categoria_activa,
+        "modo_filtro": modo_filtro,
+        "busqueda": busqueda,
+        "resultado_sync": resultado_sync,
+        "kpis_stock": {
+            "total_platos": total_platos,
+            "con_cupo": con_cupo,
+            "ilimitados": ilimitados,
+            "bajo_stock": bajo_stock,
+            "agotados": agotados,
+            "porciones_totales": porciones_totales,
+        },
+        "movimientos_recientes": movimientos_recientes,
+    }
+    return render(request, "catalogo/stock_dia.html", context)
+
+
+@staff_required
+@require_POST
+def fijar_stock_plato(request, pk):
+    """Fija el cupo diario de porciones o pasa un plato a stock ilimitado (PRB-59)."""
+    asegurar_tablas_sqlite()
+    plato = get_object_or_404(Producto, pk=pk)
+
+    modo_ilimitado = request.POST.get("ilimitado") in ("1", "true", "on")
+    stock_raw = (request.POST.get("stock_disponible") or "").strip()
+    minimo_raw = (request.POST.get("stock_minimo") or "").strip()
+    motivo = (request.POST.get("motivo") or "").strip()
+
+    if modo_ilimitado or stock_raw == "":
+        nuevo_stock = None
+    else:
+        try:
+            nuevo_stock = int(stock_raw)
+        except ValueError:
+            msg = "El stock diario debe ser un número entero mayor o igual a 0."
+            if _es_peticion_json(request):
+                return JsonResponse({"ok": False, "error": msg}, status=400)
+            messages.error(request, msg)
+            return redirect(_url_retorno_segura(request, "catalogo:stock_dia"))
+
+    nuevo_minimo = None
+    if minimo_raw != "":
+        try:
+            nuevo_minimo = int(minimo_raw)
+        except ValueError:
+            msg = (
+                "El stock mínimo de alerta debe ser un número entero mayor o igual a 0."
+            )
+            if _es_peticion_json(request):
+                return JsonResponse({"ok": False, "error": msg}, status=400)
+            messages.error(request, msg)
+            return redirect(_url_retorno_segura(request, "catalogo:stock_dia"))
+
+    try:
+        plato_act, _ = fijar_stock_diario(
+            producto_id=plato.id,
+            stock_disponible=nuevo_stock,
+            stock_minimo=nuevo_minimo,
+            motivo=motivo,
+            registrado_por=request.user.username,
+        )
+    except ValidationError as exc:
+        msg = "; ".join(exc.messages)
+        if _es_peticion_json(request):
+            return JsonResponse({"ok": False, "error": msg}, status=400)
+        messages.error(request, msg)
+        return redirect(_url_retorno_segura(request, "catalogo:stock_dia"))
+
+    if _es_peticion_json(request):
+        return JsonResponse(
+            {
+                "ok": True,
+                "id": plato_act.id,
+                "nombre": plato_act.nombre,
+                "stock_disponible": plato_act.stock_disponible,
+                "stock_minimo": plato_act.stock_minimo,
+                "disponible": plato_act.disponible,
+                "stock_bajo": plato_act.stock_bajo,
+            }
+        )
+
+    if plato_act.stock_disponible is None:
+        messages.success(
+            request,
+            f"«{plato_act.nombre}» configurado en modo stock libre (ilimitado).",
+        )
+    elif plato_act.stock_disponible == 0:
+        messages.warning(
+            request,
+            f"«{plato_act.nombre}» quedó en 0 porciones y se marcó como AGOTADO.",
+        )
+    else:
+        messages.success(
+            request,
+            f"Stock del día de «{plato_act.nombre}» fijado en "
+            f"{plato_act.stock_disponible} porción(es).",
+        )
+    return redirect(_url_retorno_segura(request, "catalogo:stock_dia"))
+
+
+@staff_required
+@require_POST
+def ajustar_stock_plato(request, pk):
+    """Ajusta relativamente (+/- porciones) el stock diario de un plato (PRB-59)."""
+    asegurar_tablas_sqlite()
+    plato = get_object_or_404(Producto, pk=pk)
+    delta_raw = (request.POST.get("delta") or "").strip()
+    motivo = (request.POST.get("motivo") or "").strip()
+
+    try:
+        delta = int(delta_raw)
+    except ValueError:
+        msg = "Indica una cantidad entera válida para ajustar el stock."
+        if _es_peticion_json(request):
+            return JsonResponse({"ok": False, "error": msg}, status=400)
+        messages.error(request, msg)
+        return redirect(_url_retorno_segura(request, "catalogo:stock_dia"))
+
+    try:
+        plato_act, _ = ajustar_stock_producto(
+            producto_id=plato.id,
+            delta=delta,
+            motivo=motivo,
+            registrado_por=request.user.username,
+        )
+    except ValidationError as exc:
+        msg = "; ".join(exc.messages)
+        if _es_peticion_json(request):
+            return JsonResponse({"ok": False, "error": msg}, status=400)
+        messages.error(request, msg)
+        return redirect(_url_retorno_segura(request, "catalogo:stock_dia"))
+
+    if _es_peticion_json(request):
+        return JsonResponse(
+            {
+                "ok": True,
+                "id": plato_act.id,
+                "stock_disponible": plato_act.stock_disponible,
+                "disponible": plato_act.disponible,
+                "stock_bajo": plato_act.stock_bajo,
+            }
+        )
+
+    signo = f"+{delta}" if delta > 0 else str(delta)
+    messages.success(
+        request,
+        f"Ajuste aplicado ({signo}) en «{plato_act.nombre}»: "
+        f"{plato_act.stock_disponible} porción(es) disponibles.",
+    )
+    return redirect(_url_retorno_segura(request, "catalogo:stock_dia"))
+
+
+@staff_required
+@require_POST
+def carga_masiva_stock(request):
+    """Aplica cupo diario inicial por categoría o sobre toda la carta (PRB-59)."""
+    asegurar_tablas_sqlite()
+    accion = (request.POST.get("accion") or "fijar_cupo").strip()
+    categoria_id = (request.POST.get("categoria_id") or "").strip()
+    cupo_raw = (request.POST.get("cupo") or "").strip()
+    minimo_raw = (request.POST.get("stock_minimo") or "").strip()
+
+    qs = Producto.objects.all().order_by("id")
+    nombre_alcance = "toda la carta"
+    if categoria_id.isdigit():
+        cat = get_object_or_404(Categoria, pk=int(categoria_id))
+        qs = qs.filter(categoria=cat)
+        nombre_alcance = f"la categoría «{cat.nombre}»"
+
+    platos_ids = list(qs.values_list("id", flat=True))
+    if not platos_ids:
+        messages.warning(request, "No hay platos en el alcance seleccionado.")
+        return redirect("catalogo:stock_dia")
+
+    if accion == "modo_libre":
+        with transaction.atomic():
+            for pid in platos_ids:
+                fijar_stock_diario(
+                    producto_id=pid,
+                    stock_disponible=None,
+                    motivo=f"Paso masivo a stock libre en {nombre_alcance}",
+                    registrado_por=request.user.username,
+                )
+        messages.success(
+            request,
+            f"{len(platos_ids)} plato(s) de {nombre_alcance} configurados en stock libre.",
+        )
+        return redirect("catalogo:stock_dia")
+
+    try:
+        cupo = int(cupo_raw)
+        if cupo < 0:
+            raise ValueError
+    except ValueError:
+        messages.error(
+            request, "Ingresa un cupo entero mayor o igual a 0 para la carga masiva."
+        )
+        return redirect("catalogo:stock_dia")
+
+    nuevo_minimo = None
+    if minimo_raw != "":
+        try:
+            nuevo_minimo = int(minimo_raw)
+            if nuevo_minimo < 0:
+                raise ValueError
+        except ValueError:
+            messages.error(
+                request, "El umbral mínimo debe ser un entero mayor o igual a 0."
+            )
+            return redirect("catalogo:stock_dia")
+
+    with transaction.atomic():
+        for pid in platos_ids:
+            fijar_stock_diario(
+                producto_id=pid,
+                stock_disponible=cupo,
+                stock_minimo=nuevo_minimo,
+                motivo=f"Carga masiva del turno en {nombre_alcance}",
+                registrado_por=request.user.username,
+            )
+
+    messages.success(
+        request,
+        f"Carga diaria completada: {len(platos_ids)} plato(s) de {nombre_alcance} "
+        f"fijados en {cupo} porción(es).",
+    )
+    return redirect("catalogo:stock_dia")
+
+
+def _asegurar_roles_canonicos():
+    """Garantiza que existan los 4 roles oficiales para el formulario de personal."""
+    asegurar_tablas_sqlite()
+    if Rol.objects.count() < len(ROLES_OFICIALES):
+        for nombre_rol in ROLES_OFICIALES:
+            Rol.objects.get_or_create(nombre=nombre_rol)
+
+
+@staff_required
+def personal_operativo(request):
+    """Gestión de usuarios operativos POS, roles, PIN BCrypt y auditoría PRB-52."""
+    _asegurar_roles_canonicos()
+    usuarios = Usuario.objects.select_related("rol").order_by("rol_id", "username")
+    roles = Rol.objects.order_by("id")
+    auditoria = auditar_datos_produccion()
+
+    context = {
+        "nav_active": "personal",
+        "usuarios": usuarios,
+        "roles": roles,
+        "form_usuario": UsuarioOperativoForm(),
+        "auditoria": auditoria,
+        "total_usuarios": usuarios.count(),
+        "total_con_pin": sum(1 for u in usuarios if u.tiene_pin),
+        "total_bloqueados": sum(1 for u in usuarios if u.esta_bloqueado),
+    }
+    return render(request, "catalogo/personal.html", context)
+
+
+@staff_required
+@require_POST
+def crear_usuario_operativo(request):
+    """Alta de cuenta operativa POS con clave_hash y pin_hash en BCrypt cost 10."""
+    _asegurar_roles_canonicos()
+    form = UsuarioOperativoForm(request.POST)
+    if not form.is_valid():
+        for _, errs in form.errors.items():
+            for err in errs:
+                messages.error(request, err)
+        return redirect("catalogo:personal")
+
+    nuevo = Usuario(
+        username=form.cleaned_data["username"],
+        rol=form.cleaned_data["rol"],
+        intentos_fallidos=0,
+        bloqueado_hasta=None,
+    )
+    nuevo.set_password_bcrypt(form.cleaned_data["password"])
+    nuevo.set_pin_bcrypt(form.cleaned_data["pin"])
+    nuevo.save()
+    messages.success(
+        request,
+        f"Usuario operativo '{nuevo.username}' ({nuevo.rol.nombre}) registrado "
+        "con contraseña y PIN BCrypt cost 10.",
+    )
+    return redirect("catalogo:personal")
+
+
+@staff_required
+@require_POST
+def actualizar_credenciales_operativas(request, pk):
+    """Actualiza rol, contraseña BCrypt y/o PIN de 4 dígitos de un usuario POS."""
+    _asegurar_roles_canonicos()
+    usuario = get_object_or_404(Usuario, pk=pk)
+
+    rol_id = (request.POST.get("rol_id") or "").strip()
+    nueva_clave = request.POST.get("nueva_clave") or ""
+    nuevo_pin = (request.POST.get("nuevo_pin") or "").strip()
+
+    campos = []
+    try:
+        if rol_id.isdigit():
+            nuevo_rol = get_object_or_404(Rol, pk=int(rol_id))
+            if usuario.rol_id != nuevo_rol.id:
+                usuario.rol = nuevo_rol
+                campos.append("rol")
+        if nueva_clave.strip():
+            usuario.set_password_bcrypt(nueva_clave)
+            campos.append("clave_hash")
+        if nuevo_pin:
+            usuario.set_pin_bcrypt(nuevo_pin)
+            campos.append("pin_hash")
+    except ValidationError as exc:
+        messages.error(request, exc.messages[0])
+        return redirect("catalogo:personal")
+
+    if not campos:
+        messages.info(request, f"Sin cambios pendientes para '{usuario.username}'.")
+        return redirect("catalogo:personal")
+
+    usuario.intentos_fallidos = 0
+    usuario.bloqueado_hasta = None
+    campos.extend(["intentos_fallidos", "bloqueado_hasta"])
+    usuario.save(update_fields=campos)
+    messages.success(
+        request,
+        f"Credenciales BCrypt actualizadas para '{usuario.username}'.",
+    )
+    return redirect("catalogo:personal")
+
+
+@staff_required
+@require_POST
+def desbloquear_usuario_operativo(request, pk):
+    """Restablece intentos fallidos y desbloquea temporalmente una cuenta POS."""
+    asegurar_tablas_sqlite()
+    usuario = get_object_or_404(Usuario, pk=pk)
+    usuario.intentos_fallidos = 0
+    usuario.bloqueado_hasta = None
+    usuario.save(update_fields=["intentos_fallidos", "bloqueado_hasta"])
+    messages.success(request, f"Cuenta operativa '{usuario.username}' desbloqueada.")
+    return redirect("catalogo:personal")
+
+
+@staff_required
+@require_POST
+def sincronizar_seeds_produccion_view(request):
+    """Ejecuta de forma idempotente la migración de datos reales PRB-52."""
+    res = cargar_datos_produccion()
+    messages.success(
+        request,
+        f"Datos reales sincronizados (PRB-52): usuarios +{res['usuarios_creados']}/"
+        f"~{res['usuarios_actualizados']}, platos +{res['platos_creados']}/"
+        f"~{res['platos_actualizados']}, mesas +{res['mesas_creadas']}/"
+        f"~{res['mesas_actualizadas']}.",
+    )
+    return redirect("catalogo:personal")
+
+
+# =============================================================================
+# KDS DE COCINA: ESTACIONES, SEMÁFORO SLA Y TIEMPO REAL (PRB-57 · P-10)
+# =============================================================================
+
+
+def resolver_usuario_operativo_id(user):
+    """Resuelve un usuario_id válido de la tabla 'usuario' para el usuario autenticado (auth_user).
+
+    Garantiza compatibilidad con las foreign keys en PostgreSQL evitando ForeignKeyViolation.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return None
+
+    if isinstance(user, Usuario) and getattr(user, "id", None):
+        if Usuario.objects.filter(pk=user.id).exists():
+            return user.id
+
+    username = getattr(user, "username", None)
+    if username:
+        operativo = Usuario.objects.filter(username__iexact=username).first()
+        if operativo:
+            return operativo.id
+
+    cocinero_o_admin = (
+        Usuario.objects.filter(rol__nombre__in=["COCINERO", "ADMIN", "CAJERO"])
+        .order_by("id")
+        .first()
+    )
+    if cocinero_o_admin:
+        return cocinero_o_admin.id
+
+    primer_usuario = Usuario.objects.order_by("id").first()
+    if primer_usuario:
+        return primer_usuario.id
+
+    return None
+
+
+@staff_required
+def kds_cocina(request):
+    """Pantalla KDS de cocina en tiempo real con estaciones y semáforo SLA."""
+    asegurar_tablas_sqlite()
+
+    estacion = (request.GET.get("estacion") or "").strip().upper()
+    estado = (request.GET.get("estado") or "activos").strip().lower()
+
+    comandas = obtener_comandas_kds(estacion=estacion, estado_filtro=estado)
+    kpis = resumen_kpis_kds()
+
+    context = {
+        "nav_active": "cocina",
+        "comandas": comandas,
+        "kpis": kpis,
+        "estaciones_info": ESTACIONES_INFO,
+        "estacion_activa": estacion,
+        "estado_activo": estado,
+        "ahora": timezone.now(),
+    }
+    return render(request, "catalogo/kds.html", context)
+
+
+@staff_required
+@require_POST
+def kds_avanzar_pedido(request, pk):
+    """Avanza de forma transaccional el estado de preparación de una comanda o estación."""
+    asegurar_tablas_sqlite()
+    nuevo_estado = (request.POST.get("nuevo_estado") or "").strip().upper()
+    motivo = (request.POST.get("motivo") or "").strip()
+    estacion = (request.POST.get("estacion") or "").strip().upper()
+    usuario_id = resolver_usuario_operativo_id(request.user)
+
+    try:
+        pedido = avanzar_estado_comanda(
+            pedido_id=pk,
+            nuevo_estado=nuevo_estado,
+            estacion=estacion if estacion else None,
+            usuario_id=usuario_id,
+            motivo=motivo,
+        )
+    except (Pedido.DoesNotExist, ValidationError) as exc:
+        msg = str(exc)
+        if request.headers.get(
+            "x-requested-with"
+        ) == "XMLHttpRequest" or "application/json" in request.META.get(
+            "HTTP_ACCEPT", ""
+        ):
+            return JsonResponse({"ok": False, "error": msg}, status=400)
+        messages.error(request, msg)
+        return redirect("catalogo:kds_cocina")
+
+    if request.headers.get(
+        "x-requested-with"
+    ) == "XMLHttpRequest" or "application/json" in request.META.get("HTTP_ACCEPT", ""):
+        return JsonResponse(
+            {
+                "ok": True,
+                "pedido_id": pedido.id,
+                "nuevo_estado": pedido.estado,
+                "estado_display": pedido.get_estado_display(),
+            }
+        )
+
+    messages.success(
+        request,
+        f"Comanda #{pedido.id} ({pedido.origen_display}) "
+        f"actualizada a {pedido.get_estado_display()}.",
+    )
+    redirect_url = reverse("catalogo:kds_cocina")
+    query_parts = []
+    if request.POST.get("estacion"):
+        query_parts.append(f"estacion={request.POST.get('estacion')}")
+    if request.POST.get("estado"):
+        query_parts.append(f"estado={request.POST.get('estado')}")
+    if query_parts:
+        redirect_url = f"{redirect_url}?{'&'.join(query_parts)}"
+    return redirect(redirect_url)
+
+
+@staff_required
+@require_POST
+def kds_avanzar_item(request, detalle_id):
+    """Avanza atómicamente el estado individual de un plato en el KDS (PRB-57, PRB-86)."""
+    asegurar_tablas_sqlite()
+    nuevo_estado = (request.POST.get("nuevo_estado") or "").strip().upper()
+    motivo = (request.POST.get("motivo") or "").strip()
+    usuario_id = resolver_usuario_operativo_id(request.user)
+
+    try:
+        detalle = avanzar_estado_item(
+            detalle_id=detalle_id,
+            nuevo_estado=nuevo_estado,
+            usuario_id=usuario_id,
+            motivo=motivo,
+        )
+    except (DetallePedido.DoesNotExist, ValidationError) as exc:
+        msg = str(exc)
+        if request.headers.get(
+            "x-requested-with"
+        ) == "XMLHttpRequest" or "application/json" in request.META.get(
+            "HTTP_ACCEPT", ""
+        ):
+            return JsonResponse({"ok": False, "error": msg}, status=400)
+        messages.error(request, msg)
+        return redirect("catalogo:kds_cocina")
+
+    if request.headers.get(
+        "x-requested-with"
+    ) == "XMLHttpRequest" or "application/json" in request.META.get("HTTP_ACCEPT", ""):
+        return JsonResponse(
+            {
+                "ok": True,
+                "detalle_id": detalle.id,
+                "pedido_id": detalle.pedido_id,
+                "nuevo_estado_item": detalle.estado_item,
+                "estado_item_display": detalle.get_estado_item_display(),
+                "pedido_estado": detalle.pedido.estado,
+                "pedido_estado_display": detalle.pedido.get_estado_display(),
+            }
+        )
+
+    messages.success(
+        request,
+        f"{detalle.producto.nombre} actualizado a {detalle.get_estado_item_display()}.",
+    )
+    redirect_url = reverse("catalogo:kds_cocina")
+    query_parts = []
+    if request.POST.get("estacion"):
+        query_parts.append(f"estacion={request.POST.get('estacion')}")
+    if request.POST.get("estado"):
+        query_parts.append(f"estado={request.POST.get('estado')}")
+    if query_parts:
+        redirect_url = f"{redirect_url}?{'&'.join(query_parts)}"
+    return redirect(redirect_url)
+
+
+@staff_required
+def kds_api_comandas(request):
+    """Endpoint JSON liviano para refresco automático (polling) del KDS en vivo."""
+    asegurar_tablas_sqlite()
+    estacion = (request.GET.get("estacion") or "").strip().upper()
+    estado = (request.GET.get("estado") or "activos").strip().lower()
+
+    comandas = obtener_comandas_kds(estacion=estacion, estado_filtro=estado)
+    kpis = resumen_kpis_kds()
+    payload = serializar_comandas_json(comandas)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "kpis": kpis,
+            "total_comandas": len(payload),
+            "comandas": payload,
+            "timestamp": timezone.now().isoformat(),
+        }
+    )
