@@ -52,4 +52,17 @@ urlpatterns = [
         views.cargar_carta_ejemplo_view,
         name="seed_demo",
     ),
+    path("usuarios/", views.lista_usuarios, name="usuarios_list"),
+    path("usuarios/nuevo/", views.crear_usuario, name="usuario_create"),
+    path("usuarios/<int:pk>/editar/", views.editar_usuario, name="usuario_edit"),
+    path(
+        "usuarios/<int:pk>/toggle-estado/",
+        views.toggle_estado_usuario,
+        name="usuario_toggle",
+    ),
+    path(
+        "usuarios/<int:pk>/cambiar-rol/",
+        views.cambiar_rol_usuario,
+        name="usuario_change_role",
+    ),
 ]

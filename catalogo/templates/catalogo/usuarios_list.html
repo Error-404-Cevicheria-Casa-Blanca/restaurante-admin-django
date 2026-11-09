@@ -1,0 +1,131 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}Usuarios y Roles{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Usuarios y Roles del Sistema</h1>
+    <p class="page-subtitle">
+      Gestión de personal operativo y administrativo (ADMIN, MOZO, CAJERO, COCINERO)
+    </p>
+  </div>
+  <div class="header-controls">
+    <a href="{% url 'catalogo:usuario_create' %}" class="btn btn-primary">+ Nuevo usuario</a>
+  </div>
+</header>
+
+<section class="kpi-grid" style="margin-bottom:20px;">
+  <div class="kpi-card">
+    <div class="kpi-label">Total Usuarios</div>
+    <div class="kpi-value">{{ total_usuarios }}</div>
+    <div class="kpi-meta">Personal registrado</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Usuarios Activos</div>
+    <div class="kpi-value" style="color:#10b981;">{{ usuarios_activos }}</div>
+    <div class="kpi-meta">Habilitados en sistema</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Usuarios Inactivos</div>
+    <div class="kpi-value" style="color:#f59e0b;">{{ usuarios_inactivos }}</div>
+    <div class="kpi-meta">Cuentas desactivadas</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Roles del Sistema</div>
+    <div class="kpi-value">{{ roles|length }}</div>
+    <div class="kpi-meta">ADMIN · MOZO · CAJERO · COCINERO</div>
+  </div>
+</section>
+
+<div class="card">
+  <div class="card-header" style="flex-wrap:wrap;gap:12px;">
+    <h2 class="card-title">Directorio de Usuarios</h2>
+    <form method="get" action="{% url 'catalogo:usuarios_list' %}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input type="text"
+             name="q"
+             value="{{ q }}"
+             placeholder="Buscar por username..."
+             class="form-input"
+             style="width:200px;padding:6px 10px;">
+      <select name="rol" class="form-select" style="width:160px;padding:6px 10px;">
+        <option value="">Todos los roles</option>
+        {% for r in roles %}
+        <option value="{{ r.nombre }}" {% if rol_filtro == r.nombre %}selected{% endif %}>{{ r.nombre }}</option>
+        {% endfor %}
+      </select>
+      <select name="estado" class="form-select" style="width:150px;padding:6px 10px;">
+        <option value="todos" {% if estado == 'todos' %}selected{% endif %}>Todos los estados</option>
+        <option value="activos" {% if estado == 'activos' %}selected{% endif %}>Activos</option>
+        <option value="inactivos" {% if estado == 'inactivos' %}selected{% endif %}>Inactivos</option>
+      </select>
+      <button type="submit" class="btn btn-sm btn-outline">Filtrar</button>
+    </form>
+  </div>
+
+  {% if usuarios %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Username</th>
+          <th>Rol asignado</th>
+          <th>Acceso al Panel</th>
+          <th>Estado</th>
+          <th style="text-align:right;">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in usuarios %}
+        <tr>
+          <td>#{{ u.id }}</td>
+          <td><strong>{{ u.username }}</strong></td>
+          <td>
+            <form method="post" action="{% url 'catalogo:usuario_change_role' u.id %}" class="price-inline-form">
+              {% csrf_token %}
+              <select name="rol" class="form-select" style="width:145px;padding:5px 8px;" aria-label="Rol de {{ u.username }}">
+                {% for r in roles %}
+                <option value="{{ r.id }}" {% if u.rol_id == r.id %}selected{% endif %}>{{ r.nombre }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn btn-sm btn-outline">Cambiar</button>
+            </form>
+          </td>
+          <td>
+            {% if u.rol.nombre == 'ADMIN' and u.activo %}
+            <span class="badge-trend up">Habilitado (Admin)</span>
+            {% else %}
+            <span class="badge-trend neutral">Solo POS / Operativo</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if u.activo %}
+            <span class="badge-trend up">Activo</span>
+            {% else %}
+            <span class="badge-trend warn">Inactivo</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right;white-space:nowrap;">
+            <a href="{% url 'catalogo:usuario_edit' u.id %}" class="btn btn-sm btn-outline">Editar</a>
+            <form method="post" action="{% url 'catalogo:usuario_toggle' u.id %}" style="display:inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-sm {% if u.activo %}btn-danger-soft{% else %}btn-outline{% endif %}">
+                {% if u.activo %}Desactivar{% else %}Activar{% endif %}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <h3>No se encontraron usuarios</h3>
+    <p>Registra el primer usuario del restaurante asignándole su rol correspondiente.</p>
+    <a href="{% url 'catalogo:usuario_create' %}" class="btn btn-primary" style="margin-top:10px;">Crear usuario</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

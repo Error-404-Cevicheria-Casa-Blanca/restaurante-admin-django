@@ -13,8 +13,8 @@ from django.core.exceptions import ValidationError
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
 
-from catalogo.admin import CategoriaAdmin, ProductoAdmin
-from catalogo.models import Categoria, Mesa, Pedido, Producto
+from catalogo.admin import CategoriaAdmin, ProductoAdmin, RolAdmin, UsuarioAdmin
+from catalogo.models import Categoria, Mesa, Pedido, Producto, Rol, Usuario
 
 RUTA_PROYECTO = str(settings.BASE_DIR)
 
@@ -139,6 +139,10 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(Mesa)
         if Pedido._meta.db_table not in existentes:
             editor.create_model(Pedido)
+        if Rol._meta.db_table not in existentes:
+            editor.create_model(Rol)
+        if Usuario._meta.db_table not in existentes:
+            editor.create_model(Usuario)
 
 
 class CatalogoModelTests(TestCase):
@@ -592,3 +596,247 @@ class DashboardOperativoTests(TestCase):
         resp = self.client.get("/operativo/kpis/")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login/", resp.url)
+
+
+class UsuariosRolesCRUDTests(TestCase):
+    """Pruebas unitarias e integración del CRUD de usuarios y roles (PRB-12).
+
+    Verifica el criterio de aceptación de PRB-12:
+    - Listado, alta, edición y desactivación de usuarios.
+    - Asignación y cambio de rol (ADMIN, MOZO, CAJERO, COCINERO).
+    - Validación de usuario único y datos obligatorios.
+    - Protección de acceso al panel y sincronización de permisos según rol.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.admin_panel = User.objects.create_user(
+            username="admin_prb12",
+            password="AdminPassword!123",
+            is_staff=True,
+        )
+        self.usuario_sin_permiso = User.objects.create_user(
+            username="mozo_sin_panel",
+            password="MozoPassword!123",
+            is_staff=False,
+        )
+        self.rol_admin, _ = Rol.objects.get_or_create(nombre=Rol.ROL_ADMIN)
+        self.rol_mozo, _ = Rol.objects.get_or_create(nombre=Rol.ROL_MOZO)
+        self.rol_cajero, _ = Rol.objects.get_or_create(nombre=Rol.ROL_CAJERO)
+        self.rol_cocinero, _ = Rol.objects.get_or_create(nombre=Rol.ROL_COCINERO)
+
+    def test_proteccion_acceso_panel_usuarios(self):
+        """Usuarios anónimos o sin rol ADMIN son redirigidos al login."""
+        for ruta in ("/usuarios/", "/usuarios/nuevo/"):
+            resp_anon = self.client.get(ruta)
+            self.assertEqual(resp_anon.status_code, 302)
+            self.assertIn("/login/", resp_anon["Location"])
+
+        self.client.force_login(self.usuario_sin_permiso)
+        resp_mozo = self.client.get("/usuarios/")
+        self.assertEqual(resp_mozo.status_code, 302)
+        self.assertIn("/login/", resp_mozo["Location"])
+
+    def test_alta_usuario_y_sincronizacion_acceso_panel_por_rol(self):
+        """Crear un usuario ADMIN habilita acceso al panel; MOZO queda como operativo."""
+        self.client.force_login(self.admin_panel)
+
+        # 1. Crear usuario con rol ADMIN
+        resp_admin = self.client.post(
+            "/usuarios/nuevo/",
+            {
+                "username": "nuevo_admin",
+                "rol": self.rol_admin.id,
+                "password": "ClaveAdmin2026!",
+                "activo": "on",
+            },
+        )
+        self.assertEqual(resp_admin.status_code, 302)
+        u_admin = Usuario.objects.get(username="nuevo_admin")
+        self.assertEqual(u_admin.rol.nombre, "ADMIN")
+        self.assertTrue(u_admin.activo)
+
+        User = get_user_model()
+        auth_admin = User.objects.get(username="nuevo_admin")
+        self.assertTrue(auth_admin.is_staff)
+        self.assertTrue(auth_admin.is_active)
+        self.assertTrue(auth_admin.check_password("ClaveAdmin2026!"))
+
+        # 2. Crear usuario con rol MOZO
+        resp_mozo = self.client.post(
+            "/usuarios/nuevo/",
+            {
+                "username": "mozo_salon_01",
+                "rol": self.rol_mozo.id,
+                "password": "ClaveMozo2026!",
+                "activo": "on",
+            },
+        )
+        self.assertEqual(resp_mozo.status_code, 302)
+        u_mozo = Usuario.objects.get(username="mozo_salon_01")
+        self.assertEqual(u_mozo.rol.nombre, "MOZO")
+        self.assertTrue(u_mozo.activo)
+
+        auth_mozo = User.objects.get(username="mozo_salon_01")
+        self.assertFalse(auth_mozo.is_staff)
+        self.assertTrue(auth_mozo.is_active)
+
+    def test_validacion_unicidad_y_campos_obligatorios(self):
+        """Rechaza usernames duplicados, con espacios, vacíos o contraseñas cortas."""
+        self.client.force_login(self.admin_panel)
+        Usuario.objects.create(
+            username="cajero_existente",
+            clave_hash="hash_inicial",
+            rol=self.rol_cajero,
+        )
+
+        # Username duplicado (case-insensitive)
+        resp_dup = self.client.post(
+            "/usuarios/nuevo/",
+            {
+                "username": "CAJERO_EXISTENTE",
+                "rol": self.rol_cajero.id,
+                "password": "ClaveSegura123",
+                "activo": "on",
+            },
+        )
+        self.assertEqual(resp_dup.status_code, 200)
+        self.assertContains(resp_dup, "Ya existe un usuario con ese nombre de usuario.")
+        self.assertEqual(
+            Usuario.objects.filter(username__iexact="cajero_existente").count(),
+            1,
+        )
+
+        # Username vacío y contraseña corta
+        resp_inv = self.client.post(
+            "/usuarios/nuevo/",
+            {
+                "username": "   ",
+                "rol": self.rol_mozo.id,
+                "password": "123",
+                "activo": "on",
+            },
+        )
+        self.assertEqual(resp_inv.status_code, 200)
+        self.assertContains(resp_inv, "El nombre de usuario es obligatorio.")
+        self.assertContains(
+            resp_inv,
+            "La contraseña debe tener al menos 6 caracteres.",
+        )
+
+    def test_edicion_cambio_rol_y_desactivacion_usuario(self):
+        """Editar rol y desactivar usuario refleja cambios en BD y acceso al panel."""
+        self.client.force_login(self.admin_panel)
+        self.client.post(
+            "/usuarios/nuevo/",
+            {
+                "username": "supervisor_turno",
+                "rol": self.rol_admin.id,
+                "password": "PasswordInicial123",
+                "activo": "on",
+            },
+        )
+        u = Usuario.objects.get(username="supervisor_turno")
+        User = get_user_model()
+        self.assertTrue(User.objects.get(username="supervisor_turno").is_staff)
+
+        # Cambiar rol de ADMIN a COCINERO mediante endpoint rápido
+        resp_rol = self.client.post(
+            f"/usuarios/{u.id}/cambiar-rol/",
+            {"rol": str(self.rol_cocinero.id)},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_rol.status_code, 200)
+        self.assertEqual(resp_rol.json()["rol"], "COCINERO")
+        u.refresh_from_db()
+        self.assertEqual(u.rol.nombre, "COCINERO")
+        self.assertFalse(User.objects.get(username="supervisor_turno").is_staff)
+
+        # Editar usuario por formulario (cambiar username y volver a ADMIN)
+        resp_edit = self.client.post(
+            f"/usuarios/{u.id}/editar/",
+            {
+                "username": "jefe_cocina",
+                "rol": self.rol_admin.id,
+                "password": "",
+                "activo": "on",
+            },
+        )
+        self.assertEqual(resp_edit.status_code, 302)
+        u.refresh_from_db()
+        self.assertEqual(u.username, "jefe_cocina")
+        self.assertEqual(u.rol.nombre, "ADMIN")
+        self.assertTrue(User.objects.get(username="jefe_cocina").is_staff)
+
+        # Desactivar usuario mediante toggle
+        resp_toggle = self.client.post(
+            f"/usuarios/{u.id}/toggle-estado/",
+            {},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_toggle.status_code, 200)
+        self.assertFalse(resp_toggle.json()["activo"])
+        u.refresh_from_db()
+        self.assertFalse(u.activo)
+        auth_u = User.objects.get(username="jefe_cocina")
+        self.assertFalse(auth_u.is_active)
+        self.assertFalse(auth_u.is_staff)
+
+        # Reactivar usuario mediante toggle
+        resp_react = self.client.post(
+            f"/usuarios/{u.id}/toggle-estado/",
+            {},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp_react.status_code, 200)
+        self.assertTrue(resp_react.json()["activo"])
+        u.refresh_from_db()
+        self.assertTrue(u.activo)
+        auth_u.refresh_from_db()
+        self.assertTrue(auth_u.is_active)
+        self.assertTrue(auth_u.is_staff)
+
+    def test_listado_filtros_y_acciones_admin_usuarios(self):
+        """Verifica listado con filtros por rol/estado y acciones de UsuarioAdmin."""
+        self.client.force_login(self.admin_panel)
+        u1 = Usuario.objects.create(
+            username="mozo_a",
+            clave_hash="hash_a",
+            rol=self.rol_mozo,
+        )
+        u2 = Usuario.objects.create(
+            username="cajero_b",
+            clave_hash="!INACTIVO!hash_b",
+            rol=self.rol_cajero,
+        )
+
+        resp_list = self.client.get("/usuarios/?rol=MOZO&estado=activos")
+        self.assertEqual(resp_list.status_code, 200)
+        self.assertContains(resp_list, "mozo_a")
+        self.assertNotContains(resp_list, "cajero_b")
+
+        resp_inact = self.client.get("/usuarios/?estado=inactivos")
+        self.assertEqual(resp_inact.status_code, 200)
+        self.assertContains(resp_inact, "cajero_b")
+        self.assertNotContains(resp_inact, "mozo_a")
+
+        # Acciones en Django Admin
+        site = AdminSite()
+        rol_admin = RolAdmin(Rol, site)
+        usuario_admin = UsuarioAdmin(Usuario, site)
+        self.assertEqual(rol_admin.total_usuarios(self.rol_mozo), 1)
+
+        req = MagicMock()
+        usuario_admin.desactivar_usuarios(req, Usuario.objects.filter(pk=u1.id))
+        u1.refresh_from_db()
+        self.assertFalse(u1.activo)
+
+        usuario_admin.activar_usuarios(req, Usuario.objects.filter(pk=u2.id))
+        u2.refresh_from_db()
+        self.assertTrue(u2.activo)
+

@@ -2,7 +2,8 @@ from django.contrib import admin, messages
 from django.db.models import Count
 from django.utils.translation import ngettext
 
-from .models import Categoria, Producto
+from .forms import sincronizar_acceso_panel_django
+from .models import Categoria, Producto, Rol, Usuario
 
 
 @admin.register(Categoria)
@@ -125,3 +126,69 @@ class ProductoAdmin(admin.ModelAdmin):
             % filas_actualizadas,
             messages.WARNING,
         )
+
+
+@admin.register(Rol)
+class RolAdmin(admin.ModelAdmin):
+    """Administración de roles del sistema (PRB-12)."""
+
+    list_display = ("id", "nombre", "total_usuarios")
+    search_fields = ("nombre",)
+    ordering = ("id",)
+
+    def get_queryset(self, request):
+        return (
+            super().get_queryset(request).annotate(_total_usuarios=Count("usuarios"))
+        )
+
+    @admin.display(description="Total de usuarios", ordering="_total_usuarios")
+    def total_usuarios(self, obj):
+        if hasattr(obj, "_total_usuarios"):
+            return obj._total_usuarios
+        return obj.usuarios.count()
+
+
+@admin.register(Usuario)
+class UsuarioAdmin(admin.ModelAdmin):
+    """Administración de usuarios y roles del sistema POS (PRB-12)."""
+
+    list_display = ("id", "username", "rol", "estado_activo")
+    list_filter = ("rol",)
+    search_fields = ("username",)
+    ordering = ("username",)
+    actions = ["desactivar_usuarios", "activar_usuarios"]
+
+    @admin.display(boolean=True, description="Activo")
+    def estado_activo(self, obj):
+        return obj.activo
+
+    @admin.action(description="Desactivar usuarios seleccionados")
+    def desactivar_usuarios(self, request, queryset):
+        contador = 0
+        for usuario in queryset.select_related("rol"):
+            if usuario.activo:
+                usuario.desactivar()
+                usuario.save(update_fields=["clave_hash"])
+                sincronizar_acceso_panel_django(usuario)
+                contador += 1
+        self.message_user(
+            request,
+            f"{contador} usuario(s) desactivado(s).",
+            messages.WARNING,
+        )
+
+    @admin.action(description="Activar usuarios seleccionados")
+    def activar_usuarios(self, request, queryset):
+        contador = 0
+        for usuario in queryset.select_related("rol"):
+            if not usuario.activo:
+                usuario.activar()
+                usuario.save(update_fields=["clave_hash"])
+                sincronizar_acceso_panel_django(usuario)
+                contador += 1
+        self.message_user(
+            request,
+            f"{contador} usuario(s) activado(s).",
+            messages.SUCCESS,
+        )
+

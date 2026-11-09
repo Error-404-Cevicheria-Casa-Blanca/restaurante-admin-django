@@ -14,9 +14,18 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from .forms import CategoriaForm, ProductoForm
-from .models import Categoria, Mesa, Pedido, Producto
-from .sqlite_bootstrap import asegurar_tablas_sqlite, poblar_carta_ejemplo
+from .forms import (
+    CategoriaForm,
+    ProductoForm,
+    UsuarioForm,
+    sincronizar_acceso_panel_django,
+)
+from .models import Categoria, Mesa, Pedido, Producto, Rol, Usuario
+from .sqlite_bootstrap import (
+    asegurar_roles_sistema,
+    asegurar_tablas_sqlite,
+    poblar_carta_ejemplo,
+)
 
 
 def staff_required(view_func):
@@ -741,3 +750,199 @@ def cargar_carta_ejemplo_view(request):
     else:
         messages.info(request, "Todos los platos de ejemplo ya estaban en la carta.")
     return redirect(_url_retorno_segura(request, "catalogo:dashboard"))
+
+
+# =============================================================================
+# Gestión de Usuarios y Roles del Sistema (PRB-12)
+# =============================================================================
+
+
+@staff_required
+def lista_usuarios(request):
+    """Listado y filtro de usuarios del sistema y sus roles (PRB-12)."""
+    asegurar_roles_sistema()
+
+    q = (request.GET.get("q") or "").strip()
+    rol_filtro = (request.GET.get("rol") or "").strip().upper()
+    estado = (request.GET.get("estado") or "todos").strip().lower()
+
+    usuarios_todos = list(Usuario.objects.select_related("rol").order_by("username"))
+    total_usuarios = len(usuarios_todos)
+    usuarios_activos = sum(1 for u in usuarios_todos if u.activo)
+    usuarios_inactivos = total_usuarios - usuarios_activos
+
+    usuarios_qs = Usuario.objects.select_related("rol").order_by("username")
+    if q:
+        usuarios_qs = usuarios_qs.filter(username__icontains=q)
+    if rol_filtro in Rol.ROLES_VALIDOS:
+        usuarios_qs = usuarios_qs.filter(rol__nombre=rol_filtro)
+    if estado == "activos":
+        usuarios_qs = usuarios_qs.exclude(
+            clave_hash__startswith=Usuario.PREFIJO_INACTIVO
+        )
+    elif estado == "inactivos":
+        usuarios_qs = usuarios_qs.filter(
+            clave_hash__startswith=Usuario.PREFIJO_INACTIVO
+        )
+
+    roles = list(
+        Rol.objects.annotate(total_usuarios=Count("usuarios")).order_by("id")
+    )
+
+    context = {
+        "nav_active": "usuarios",
+        "usuarios": list(usuarios_qs),
+        "roles": roles,
+        "q": q,
+        "rol_filtro": rol_filtro,
+        "estado": estado,
+        "total_usuarios": total_usuarios,
+        "usuarios_activos": usuarios_activos,
+        "usuarios_inactivos": usuarios_inactivos,
+    }
+    return render(request, "catalogo/usuarios_list.html", context)
+
+
+@staff_required
+def crear_usuario(request):
+    """Alta de un nuevo usuario del restaurante con asignación de rol (PRB-12)."""
+    asegurar_roles_sistema()
+
+    if request.method == "POST":
+        form = UsuarioForm(request.POST)
+        if form.is_valid():
+            usuario = form.save()
+            messages.success(
+                request,
+                f"Usuario «{usuario.username}» ({usuario.rol.nombre}) creado exitosamente.",
+            )
+            return redirect("catalogo:usuarios_list")
+        messages.error(request, "Revisa los campos marcados en el formulario.")
+    else:
+        rol_id = request.GET.get("rol")
+        initial = {"activo": True}
+        if rol_id and rol_id.isdigit():
+            initial["rol"] = int(rol_id)
+        form = UsuarioForm(initial=initial)
+
+    return render(
+        request,
+        "catalogo/usuario_form.html",
+        {
+            "nav_active": "usuarios",
+            "form": form,
+            "modo_edicion": False,
+        },
+    )
+
+
+@staff_required
+def editar_usuario(request, pk):
+    """Edición de datos, rol, contraseña opcional y estado de un usuario (PRB-12)."""
+    asegurar_roles_sistema()
+    usuario = get_object_or_404(Usuario.objects.select_related("rol"), pk=pk)
+
+    if request.method == "POST":
+        form = UsuarioForm(request.POST, instance=usuario)
+        if form.is_valid():
+            actualizado = form.save()
+            messages.success(
+                request,
+                f"Usuario «{actualizado.username}» ({actualizado.rol.nombre}) actualizado.",
+            )
+            return redirect("catalogo:usuarios_list")
+        messages.error(request, "No se pudo guardar el usuario. Revisa los errores.")
+    else:
+        form = UsuarioForm(instance=usuario)
+
+    return render(
+        request,
+        "catalogo/usuario_form.html",
+        {
+            "nav_active": "usuarios",
+            "form": form,
+            "usuario_obj": usuario,
+            "modo_edicion": True,
+        },
+    )
+
+
+@staff_required
+@require_POST
+def toggle_estado_usuario(request, pk):
+    """Activa o desactiva un usuario y sincroniza su acceso al panel (PRB-12)."""
+    asegurar_roles_sistema()
+    usuario = get_object_or_404(Usuario.objects.select_related("rol"), pk=pk)
+
+    if usuario.activo:
+        usuario.desactivar()
+    else:
+        usuario.activar()
+    usuario.save(update_fields=["clave_hash"])
+    sincronizar_acceso_panel_django(usuario)
+
+    if _es_peticion_json(request):
+        return JsonResponse(
+            {
+                "ok": True,
+                "id": usuario.id,
+                "username": usuario.username,
+                "activo": usuario.activo,
+                "rol": usuario.rol.nombre,
+            }
+        )
+
+    estado_txt = "reactivado" if usuario.activo else "desactivado"
+    nivel = messages.SUCCESS if usuario.activo else messages.WARNING
+    messages.add_message(
+        request,
+        nivel,
+        f"Usuario «{usuario.username}» {estado_txt}.",
+    )
+    return redirect(_url_retorno_segura(request, "catalogo:usuarios_list"))
+
+
+@staff_required
+@require_POST
+def cambiar_rol_usuario(request, pk):
+    """Cambia el rol de un usuario y actualiza sus permisos de panel (PRB-12)."""
+    asegurar_roles_sistema()
+    usuario = get_object_or_404(Usuario.objects.select_related("rol"), pk=pk)
+    rol_val = (request.POST.get("rol") or "").strip()
+
+    nuevo_rol = None
+    if rol_val.isdigit():
+        nuevo_rol = Rol.objects.filter(pk=int(rol_val)).first()
+    elif rol_val.upper() in Rol.ROLES_VALIDOS:
+        nuevo_rol = Rol.objects.filter(nombre=rol_val.upper()).first()
+
+    if nuevo_rol is None or nuevo_rol.nombre not in Rol.ROLES_VALIDOS:
+        if _es_peticion_json(request):
+            return JsonResponse(
+                {"ok": False, "error": "Rol inválido o no encontrado."},
+                status=400,
+            )
+        messages.error(request, "Debe seleccionar un rol válido del sistema.")
+        return redirect(_url_retorno_segura(request, "catalogo:usuarios_list"))
+
+    usuario.rol = nuevo_rol
+    usuario.save(update_fields=["rol"])
+    sincronizar_acceso_panel_django(usuario)
+
+    if _es_peticion_json(request):
+        return JsonResponse(
+            {
+                "ok": True,
+                "id": usuario.id,
+                "username": usuario.username,
+                "rol": usuario.rol.nombre,
+                "activo": usuario.activo,
+            }
+        )
+
+    messages.success(
+        request,
+        f"Rol de «{usuario.username}» actualizado a {usuario.rol.nombre}.",
+    )
+    return redirect(_url_retorno_segura(request, "catalogo:usuarios_list"))
+

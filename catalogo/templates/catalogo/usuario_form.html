@@ -1,0 +1,66 @@
+{% extends "catalogo/base.html" %}
+
+{% block title %}{% if modo_edicion %}Editar Usuario{% else %}Nuevo Usuario{% endif %}{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">
+      {% if modo_edicion %}Editar usuario: {{ usuario_obj.username }}{% else %}Registrar nuevo usuario del sistema{% endif %}
+    </h1>
+    <p class="page-subtitle">
+      Define las credenciales, el rol del sistema (ADMIN, MOZO, CAJERO, COCINERO) y su estado
+    </p>
+  </div>
+  <div class="header-controls">
+    <a href="{% url 'catalogo:usuarios_list' %}" class="btn btn-outline">Volver a Usuarios</a>
+  </div>
+</header>
+
+<section class="card" style="max-width:680px;">
+  <form method="post" novalidate>
+    {% csrf_token %}
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="{{ form.username.id_for_label }}">Nombre de usuario (username) *</label>
+        {{ form.username }}
+        <span class="form-help">Identificador único sin espacios (ej. mozo_01, cajero_turno1).</span>
+        {% for err in form.username.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="{{ form.rol.id_for_label }}">Rol del sistema *</label>
+        {{ form.rol }}
+        <span class="form-help">ADMIN otorga acceso al panel web; los demás roles son operativos.</span>
+        {% for err in form.rol.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label" for="{{ form.password.id_for_label }}">
+          Contraseña {% if not modo_edicion %}*{% else %}(dejar en blanco para mantener la actual){% endif %}
+        </label>
+        {{ form.password }}
+        <span class="form-help">Mínimo 6 caracteres. Se almacena como hash seguro.</span>
+        {% for err in form.password.errors %}<span class="form-error">{{ err }}</span>{% endfor %}
+      </div>
+
+      <div class="form-group full">
+        <label class="checkbox-row">
+          {{ form.activo }}
+          <div>
+            <div style="font-weight:600;color:#0f172a;">Usuario activo en el sistema</div>
+            <div class="form-help">Desmarca esta casilla para desactivar el acceso del usuario sin eliminar su historial.</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:22px;">
+      <a href="{% url 'catalogo:usuarios_list' %}" class="btn btn-outline">Cancelar</a>
+      <button type="submit" class="btn btn-primary">
+        {% if modo_edicion %}Guardar cambios{% else %}Crear usuario{% endif %}
+      </button>
+    </div>
+  </form>
+</section>
+{% endblock %}

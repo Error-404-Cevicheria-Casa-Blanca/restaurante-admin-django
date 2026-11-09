@@ -189,7 +189,30 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 total NUMERIC(10, 2) NOT NULL DEFAULT 0.00
             );
             """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rol (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre VARCHAR(50) NOT NULL UNIQUE
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS usuario (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username VARCHAR(50) NOT NULL UNIQUE,
+                clave_hash VARCHAR(255) NOT NULL,
+                rol_id INTEGER NOT NULL REFERENCES rol(id) ON DELETE RESTRICT
+            );
+            """)
     _TABLAS_ASEGURADAS.add(using)
+
+
+def asegurar_roles_sistema():
+    """Garantiza que existan los 4 roles base del sistema (ADMIN, MOZO, CAJERO, COCINERO)."""
+    from catalogo.models import Rol
+
+    asegurar_tablas_sqlite()
+    for codigo, _ in Rol.ROLES_CHOICES:
+        Rol.objects.get_or_create(nombre=codigo)
 
 
 def poblar_carta_ejemplo(permitir_postgres=False):

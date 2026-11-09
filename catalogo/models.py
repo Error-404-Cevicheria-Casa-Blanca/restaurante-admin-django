@@ -191,3 +191,98 @@ class Pedido(models.Model):
 
     def __str__(self):
         return f"Pedido #{self.id} (Mesa {self.mesa.numero}) - S/ {self.total}"
+
+
+class Rol(models.Model):
+    """Rol de usuario del sistema POS y backoffice (PRB-12).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'rol' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    ROL_ADMIN = "ADMIN"
+    ROL_MOZO = "MOZO"
+    ROL_CAJERO = "CAJERO"
+    ROL_COCINERO = "COCINERO"
+
+    ROLES_CHOICES = [
+        (ROL_ADMIN, "Administrador"),
+        (ROL_MOZO, "Mozo"),
+        (ROL_CAJERO, "Cajero"),
+        (ROL_COCINERO, "Cocinero"),
+    ]
+
+    ROLES_VALIDOS = {ROL_ADMIN, ROL_MOZO, ROL_CAJERO, ROL_COCINERO}
+
+    nombre = models.CharField(
+        max_length=50,
+        unique=True,
+        choices=ROLES_CHOICES,
+        verbose_name="Nombre del rol",
+    )
+
+    class Meta:
+        db_table = "rol"
+        managed = False
+        verbose_name = "Rol"
+        verbose_name_plural = "Roles"
+        ordering = ["id"]
+
+    def __str__(self):
+        return self.nombre
+
+
+class Usuario(models.Model):
+    """Usuario operativo o administrativo del restaurante (PRB-12).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'usuario' es creada y
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    La baja lógica (desactivación) se codifica con el prefijo '!INACTIVO!' sobre
+    `clave_hash`, invalidando el hash BCrypt sin alterar el DDL compartido.
+    """
+
+    PREFIJO_INACTIVO = "!INACTIVO!"
+
+    username = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Nombre de usuario",
+    )
+    clave_hash = models.CharField(
+        max_length=255,
+        verbose_name="Hash de contraseña",
+    )
+    rol = models.ForeignKey(
+        Rol,
+        on_delete=models.RESTRICT,
+        db_column="rol_id",
+        related_name="usuarios",
+        verbose_name="Rol",
+    )
+
+    class Meta:
+        db_table = "usuario"
+        managed = False
+        verbose_name = "Usuario del Sistema"
+        verbose_name_plural = "Usuarios del Sistema"
+        ordering = ["username"]
+
+    @property
+    def activo(self):
+        """Indica si el usuario se encuentra activo para operar en el sistema."""
+        return not (self.clave_hash or "").startswith(self.PREFIJO_INACTIVO)
+
+    def desactivar(self):
+        """Marca al usuario como inactivo preservando su hash original."""
+        if self.activo:
+            self.clave_hash = f"{self.PREFIJO_INACTIVO}{self.clave_hash or ''}"
+
+    def activar(self):
+        """Reactiva al usuario restaurando su hash original."""
+        if not self.activo:
+            self.clave_hash = (self.clave_hash or "")[len(self.PREFIJO_INACTIVO):]
+
+    def __str__(self):
+        estado_str = "Activo" if self.activo else "Inactivo"
+        return f"{self.username} ({self.rol.nombre}) - {estado_str}"
+
