@@ -2018,17 +2018,19 @@ class KDSCocinaTests(TestCase):
             self.assertIsNone(_validar_fk_usuario_id(999999))
 
     def test_kds_descuento_stock_automatico_sin_typeerror(self):
-        """PRB-57: Valida avance KDS con descuento de stock y MovimientoStock."""
+        """PRB-57: Valida avance KDS con descuento de stock multi-ítem y registrado_por."""
         self.ceviche.stock_disponible = 25
         self.ceviche.save()
+        self.jalea.stock_disponible = 15
+        self.jalea.save()
 
         ped = Pedido.objects.create(
             mesa=self.mesa1,
             mozo_id=1,
             estado=Pedido.ESTADO_PENDIENTE,
-            total=Decimal("48.00"),
+            total=Decimal("161.00"),
         )
-        det = DetallePedido.objects.create(
+        det_ceviche = DetallePedido.objects.create(
             pedido=ped,
             producto=self.ceviche,
             cantidad=2,
@@ -2036,31 +2038,56 @@ class KDSCocinaTests(TestCase):
             subtotal=Decimal("96.00"),
             estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
         )
+        det_jalea = DetallePedido.objects.create(
+            pedido=ped,
+            producto=self.jalea,
+            cantidad=1,
+            precio_unitario=Decimal("65.00"),
+            subtotal=Decimal("65.00"),
+            estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
+        )
 
-        # 1. Al pasar a COCINANDO, se descuentan 2 unidades de stock
+        # Pasar instancia de Pedido en vez de int lanza TypeError explícito
+        with self.assertRaises(TypeError):
+            descontar_stock_pedido(ped)
+
+        # 1. Al pasar a COCINANDO en KDS, se descuenta el stock y se registra el autor
         avanzar_estado_item(
-            det.id,
+            det_ceviche.id,
             DetallePedido.ESTADO_ITEM_COCINANDO,
             usuario_id=1,
             motivo="Inicio preparación ceviche",
         )
         self.ceviche.refresh_from_db()
+        self.jalea.refresh_from_db()
         self.assertEqual(self.ceviche.stock_disponible, 23)
+        self.assertEqual(self.jalea.stock_disponible, 14)
 
-        # Verificar movimiento de stock generado
-        movs = list(MovimientoStock.objects.filter(pedido=ped))
-        self.assertEqual(len(movs), 1)
+        # Verificar movimientos de stock generados y campo registrado_por
+        movs = list(MovimientoStock.objects.filter(pedido=ped).order_by("producto_id"))
+        self.assertEqual(len(movs), 2)
         self.assertEqual(movs[0].cantidad, 2)
         self.assertEqual(movs[0].tipo, MovimientoStock.TIPO_SALIDA_VENTA)
         self.assertEqual(movs[0].stock_anterior, 25)
         self.assertEqual(movs[0].stock_resultante, 23)
+        self.assertIn("kds", movs[0].registrado_por)
+        self.assertEqual(movs[1].cantidad, 1)
+        self.assertEqual(movs[1].stock_resultante, 14)
+        self.assertIn("kds", movs[1].registrado_por)
 
-        # 2. Al pasar a LISTO (o avanzar comanda), es idempotente y no descuenta doble
+        # 2. Al pasar a LISTO ambos ítems, es idempotente y no descuenta doble
         avanzar_estado_item(
-            det.id,
+            det_ceviche.id,
+            DetallePedido.ESTADO_ITEM_LISTO,
+            usuario_id=1,
+        )
+        avanzar_estado_item(
+            det_jalea.id,
             DetallePedido.ESTADO_ITEM_LISTO,
             usuario_id=1,
         )
         self.ceviche.refresh_from_db()
+        self.jalea.refresh_from_db()
         self.assertEqual(self.ceviche.stock_disponible, 23)
-        self.assertEqual(MovimientoStock.objects.filter(pedido=ped).count(), 1)
+        self.assertEqual(self.jalea.stock_disponible, 14)
+        self.assertEqual(MovimientoStock.objects.filter(pedido=ped).count(), 2)

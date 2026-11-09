@@ -55,7 +55,7 @@ Cada avance genera automáticamente un registro inmutable en la tabla compartida
 ## 3. Pruebas Automatizadas y Cobertura
 
 ### 3.1 Suite de Tests Unitarios e Integración (`KDSCocinaTests`)
-Se añadieron 12 casos de prueba exhaustivos en `catalogo/tests.py`:
+Se añadieron 13 casos de prueba exhaustivos en `catalogo/tests.py`:
 1. `test_derivacion_de_estaciones_de_cocina_y_items`: Valida la asignación precisa de estación para ceviches, jaleas, chichas y postres.
 2. `test_cronometro_sla_y_semaforo_de_tiempos`: Verifica los umbrales de minutos y etiquetas de semáforo (Normal < 10m, Alerta 10–20m, Crítico > 20m).
 3. `test_avanzar_estado_comanda_y_auditoria_evento_pedido`: Valida la secuencia `PENDIENTE -> COCINANDO -> LISTO -> SERVIDO` y rechaza transiciones no permitidas (`ValidationError`).
@@ -68,10 +68,11 @@ Se añadieron 12 casos de prueba exhaustivos en `catalogo/tests.py`:
 10. `test_aislamiento_estaciones_no_avanza_otra_estacion`: Comprueba que marcar lista Barra Fría no marca Bebidas ni la comanda general.
 11. `test_kds_avanzar_item_endpoint_html_y_ajax`: Verifica el nuevo endpoint POST `/cocina/items/<id>/avanzar/`.
 12. `test_fk_usuario_id_seguro_postgres`: Comprueba que pasar IDs inexistentes o de `auth_user` no provoque `ForeignKeyViolation` en PostgreSQL.
+13. `test_kds_descuento_stock_automatico_sin_typeerror`: Valida el descuento real e idempotente de stock en pedidos multi-ítem al avanzar en el KDS y verifica `registrado_por`.
 
 ### 3.2 Resultado de Ejecución de Tests
 ```
-Ran 61 tests in 105.333s
+Ran 62 tests in 55.229s
 OK
 System check identified no issues (0 silenced).
 ```
@@ -83,19 +84,19 @@ Name                                                                   Stmts   M
 catalogo\admin.py                                                         67      2    97%
 catalogo\apps.py                                                           9      0   100%
 catalogo\forms.py                                                        114     23    80%
-catalogo\kds_service.py                                                  199     35    82%
+catalogo\kds_service.py                                                  201     39    81%
 catalogo\management\commands\seed_produccion.py                           15      2    87%
 catalogo\models.py                                                       339     18    95%
 catalogo\produccion_seeds.py                                             140     29    79%
 catalogo\sqlite_bootstrap.py                                              60     21    65%
-catalogo\stock_service.py                                                242     32    87%
-catalogo\tests.py                                                        889     11    99%
+catalogo\stock_service.py                                                244     23    91%
+catalogo\tests.py                                                        921     11    99%
 catalogo\urls.py                                                           4      0   100%
 catalogo\views.py                                                        903    262    71%
 ------------------------------------------------------------------------------------------
-TOTAL                                                                   3033    447    85%
+TOTAL                                                                   3107    436    86%
 ```
-*Cobertura global alcanzada:* **85%** (supera el estándar exigido de ≥ 83%).
+*Cobertura global alcanzada:* **86%** (supera el estándar exigido de ≥ 85%).
 Salida cruda completa preservada en: `docs/evidencias/PRB-57/02-salida-terminal-tests.txt`.
 
 ---

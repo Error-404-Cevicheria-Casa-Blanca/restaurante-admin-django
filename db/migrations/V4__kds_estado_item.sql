@@ -10,14 +10,17 @@ BEGIN;
 
 -- 1. Agregar columna estado_item a detalle_pedido (PRB-86)
 -- Permite que cada plato avance independientemente en su estación de cocina.
-ALTER TABLE detalle_pedido ADD COLUMN IF NOT EXISTS estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE';
+ALTER TABLE detalle_pedido
+    ADD COLUMN IF NOT EXISTS estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE';
 
 -- 2. Agregar columna estacion a detalle_pedido (PRB-57)
--- Mapea a: BARRA_FRIA, COCINA_CALIENTE, BEBIDAS, POSTRES
-ALTER TABLE detalle_pedido ADD COLUMN IF NOT EXISTS estacion VARCHAR(50);
+-- Alineado con db/schema.sql:71 (VARCHAR(30) NOT NULL DEFAULT 'COCINA_CALIENTE')
+ALTER TABLE detalle_pedido
+    ADD COLUMN IF NOT EXISTS estacion VARCHAR(30) NOT NULL DEFAULT 'COCINA_CALIENTE';
 
 -- 3. Agregar columna anulado_motivo a detalle_pedido (PRB-77)
-ALTER TABLE detalle_pedido ADD COLUMN IF NOT EXISTS anulado_motivo VARCHAR(255);
+ALTER TABLE detalle_pedido
+    ADD COLUMN IF NOT EXISTS anulado_motivo VARCHAR(255);
 
 -- 4. Constraint de validación de estados por plato
 DO $$

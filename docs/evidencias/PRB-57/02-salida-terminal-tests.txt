@@ -1,12 +1,17 @@
-======================================================================
-RESULTADO DE SUITE DE PRUEBAS AUTOMATIZADAS (61 TESTS)
-======================================================================
+Found 62 test(s).
+Creating test database for alias 'default'...
+System check identified no issues (0 silenced).
+Seeds PRB-52 aplicados: roles +2, usuarios +4/~1, platos +15/~0, mesas +13/~0.
+Auditoría PRB-52 OK: 4 roles, 5 usuarios con PIN BCrypt, 15/15 platos oficiales con foto y 13/13 mesas verificadas.
+Seeds PRB-52 aplicados: roles +0, usuarios +0/~0, platos +0/~0, mesas +0/~0.
+Auditoría PRB-52 OK: 4 roles, 5 usuarios con PIN BCrypt, 15/15 platos oficiales con foto y 13/13 mesas verificadas.
+Auditoría PRB-52 OK: 4 roles, 5 usuarios con PIN BCrypt, 15/15 platos oficiales con foto y 13/13 mesas verificadas.
+..............................................................
+----------------------------------------------------------------------
+Ran 62 tests in 55.229s
 
-Ran 61 tests in 105.333s - OK (EXIT=0)
-
-======================================================================
-REPORTE DE COBERTURA DE CODIGO (COVERAGE REPORT >= 85%)
-======================================================================
+OK
+Destroying test database for alias 'default'...
 
 Name                                                                   Stmts   Miss  Cover
 ------------------------------------------------------------------------------------------
@@ -14,10 +19,9 @@ catalogo\__init__.py                                                       0    
 catalogo\admin.py                                                         67      2    97%
 catalogo\apps.py                                                           9      0   100%
 catalogo\forms.py                                                        114     23    80%
-catalogo\kds_service.py                                                  199     35    82%
+catalogo\kds_service.py                                                  201     39    81%
 catalogo\management\__init__.py                                            0      0   100%
 catalogo\management\commands\__init__.py                                   0      0   100%
-catalogo\management\commands\seed_catalogo.py                             12     12     0%
 catalogo\management\commands\seed_produccion.py                           15      2    87%
 catalogo\migrations\0001_initial.py                                        7      0   100%
 catalogo\migrations\0002_producto_categoria.py                             5      0   100%
@@ -31,9 +35,18 @@ catalogo\migrations\__init__.py                                            0    
 catalogo\models.py                                                       339     18    95%
 catalogo\produccion_seeds.py                                             140     29    79%
 catalogo\sqlite_bootstrap.py                                              60     21    65%
-catalogo\stock_service.py                                                242     32    87%
-catalogo\tests.py                                                        889     11    99%
+catalogo\stock_service.py                                                244     23    91%
+catalogo\tests.py                                                        921     11    99%
 catalogo\urls.py                                                           4      0   100%
 catalogo\views.py                                                        903    262    71%
+config\__init__.py                                                         0      0   100%
+config\settings.py                                                        29      4    86%
+config\urls.py                                                             6      0   100%
+inventario\__init__.py                                                     0      0   100%
+inventario\admin.py                                                        0      0   100%
+inventario\apps.py                                                         4      0   100%
+inventario\migrations\__init__.py                                          0      0   100%
+inventario\models.py                                                       0      0   100%
+manage.py                                                                 11      2    82%
 ------------------------------------------------------------------------------------------
-TOTAL                                                                   3033    447    85%
+TOTAL                                                                   3107    436    86%

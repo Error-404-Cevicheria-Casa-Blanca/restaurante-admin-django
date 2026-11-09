@@ -1,49 +1,50 @@
-======================================================================
+﻿======================================================================
 VERIFICACION EN VIVO PRB-57 - KDS COCINA Y PRB-86 ESTADO POR ITEM
 ======================================================================
 [OK] PostgreSQL Version: PostgreSQL 18.6 on x86_64-windows, compiled by msvc-19.44.35...
-[OK] Columnas PRB-86 en detalle_pedido:
-     - anulado_motivo (character varying) DEFAULT None
-     - estacion (character varying) DEFAULT 'COCINA_CALIENTE'::character varying
-     - estado_item (character varying) DEFAULT 'PENDIENTE'::character varying
-[OK] �ndice: idx_detalle_estado_estacion -> CREATE INDEX idx_detalle_estado_estacion ON public.detalle_pedido USING btree (estado_item, estacion)
+[OK] Columnas PRB-86 en detalle_pedido (esquema verificado en modo lectura):
+     - anulado_motivo (character varying(255), nullable=YES) DEFAULT None
+     - estacion (character varying(30), nullable=NO) DEFAULT 'COCINA_CALIENTE'::character varying
+     - estado_item (character varying(20), nullable=NO) DEFAULT 'PENDIENTE'::character varying
+[OK] ├ìndice: idx_detalle_estado_estacion -> CREATE INDEX idx_detalle_estado_estacion ON public.detalle_pedido USING btree (estado_item, estacion)
 [OK] Datos base: Mesa 1, Mozo mozo_01 (ID 2)
-     Plato 1: Ceviche Cl�sico [Estaci�n: BARRA_FRIA]
-     Plato 2: Chicha Morada de la Casa (1 L) [Estaci�n: BEBIDAS]
-[OK] Comanda #1127 creada: estado inicial 'PENDIENTE'
-     - �tem #1123 (Ceviche Cl�sico): PENDIENTE
-     - �tem #1124 (Chicha Morada de la Casa (1 L)): PENDIENTE
+     Plato 1: Ceviche Cl├ísico [Estaci├│n: BARRA_FRIA]
+     Plato 2: Chicha Morada de la Casa (1 L) [Estaci├│n: BEBIDAS]
+[OK] Comanda #1129 creada: estado inicial 'PENDIENTE'
+     - ├ìtem #1127 (Ceviche Cl├ísico): PENDIENTE
+     - ├ìtem #1128 (Chicha Morada de la Casa (1 L)): PENDIENTE
 [OK] Paso 1: Ceviche pasa a 'COCINANDO', Comanda pasa a 'COCINANDO'
-[OK] Paso 2 (Aislamiento de estaci�n):
-     - Ceviche (Barra Fr�a): 'LISTO'
+[OK] Descuento de stock KDS (D2): 1 movimiento(s) en 'movimiento_stock' (registrado_por='kds_usuario_2')
+[OK] Paso 2 (Aislamiento de estaci├│n):
+     - Ceviche (Barra Fr├¡a): 'LISTO'
      - Chicha (Bebidas): 'PENDIENTE'
-     - Comanda general: 'COCINANDO' (NO est� LISTO porque falta Bebidas)
-[OK] Paso 3: Chicha pasa a 'LISTO' -> Ahora TODOS los platos est�n listos.
-     - Comanda general: 'LISTO' (Recalculado autom�ticamente a LISTO)
-[OK] Paso 4: Ambos �tems SERVIDO -> Comanda general: 'SERVIDO'
-[OK] Auditor�a: 5 eventos inmutables registrados en 'evento_pedido':
-     - Evento #19: PENDIENTE -> COCINANDO | Usuario ID: 2 | Motivo: Cocinero inicia ceviche
-     - Evento #20: COCINANDO -> LISTO | Usuario ID: 2 | Motivo: Barra Fr�a termina ceviche
-     - Evento #21: PENDIENTE -> LISTO | Usuario ID: 2 | Motivo: Bar termina chicha
-     - Evento #22: LISTO -> SERVIDO | Usuario ID: 2 | Motivo: Mozo sirve ceviche
-     - Evento #23: LISTO -> SERVIDO | Usuario ID: 2 | Motivo: Mozo sirve chicha
-[OK] Limpieza: Comanda de prueba eliminada.
-[OK] Fotos de platos (15 encontradas en catalogo\static\catalogo\img\platos):
-     - arroz_mariscos.png: 904,536 bytes (Foto real)
-     - causa_cangrejo.png: 764,371 bytes (Foto real)
-     - ceviche_clasico.png: 741,005 bytes (Foto real)
-     - ceviche_mixto.png: 740,995 bytes (Foto real)
-     - chicha_morada.png: 752,959 bytes (Foto real)
-     - choros_chalaca.png: 808,761 bytes (Foto real)
-     - conchas_negras.png: 824,663 bytes (Foto real)
-     - corvina_macho.png: 727,827 bytes (Foto real)
-     - jalea_mixta.png: 833,601 bytes (Foto real)
-     - leche_tigre.png: 816,760 bytes (Foto real)
-     - limonada_frozen.png: 366,458 bytes (Foto real)
-     - parihuela.png: 698,422 bytes (Foto real)
-     - picarones.png: 604,777 bytes (Foto real)
-     - suspiro_limena.png: 533,090 bytes (Foto real)
-     - tiradito_aji.png: 697,195 bytes (Foto real)
+     - Comanda general: 'COCINANDO' (NO est├í LISTO porque falta Bebidas)
+[OK] Paso 3: Chicha pasa a 'LISTO' -> Ahora TODOS los platos est├ín listos.
+     - Comanda general: 'LISTO' (Recalculado autom├íticamente a LISTO)
+[OK] Paso 4: Ambos ├¡tems SERVIDO -> Comanda general: 'SERVIDO'
+[OK] Auditor├¡a: 5 eventos inmutables registrados en 'evento_pedido':
+     - Evento #29: PENDIENTE -> COCINANDO | Usuario ID: 2 | Motivo: Cocinero inicia ceviche
+     - Evento #30: COCINANDO -> LISTO | Usuario ID: 2 | Motivo: Barra Fr├¡a termina ceviche
+     - Evento #31: PENDIENTE -> LISTO | Usuario ID: 2 | Motivo: Bar termina chicha
+     - Evento #32: LISTO -> SERVIDO | Usuario ID: 2 | Motivo: Mozo sirve ceviche
+     - Evento #33: LISTO -> SERVIDO | Usuario ID: 2 | Motivo: Mozo sirve chicha
+[OK] Limpieza: Comanda de prueba, movimientos y stock restaurados.
+[OK] Fotos de platos (15 verificadas en catalogo\static\catalogo\img\platos):
+     - arroz_mariscos.png: 904,536 bytes | 588x600 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - causa_cangrejo.png: 764,371 bytes | 600x450 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - ceviche_clasico.png: 741,005 bytes | 600x435 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - ceviche_mixto.png: 740,995 bytes | 600x450 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - chicha_morada.png: 752,959 bytes | 506x600 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - choros_chalaca.png: 808,761 bytes | 600x450 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - conchas_negras.png: 824,663 bytes | 600x450 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - corvina_macho.png: 727,827 bytes | 600x450 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - jalea_mixta.png: 833,601 bytes | 600x450 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - leche_tigre.png: 816,760 bytes | 450x600 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - limonada_frozen.png: 366,458 bytes | 400x600 px | entrop├¡a=8.00 bits/byte (Fotograf├¡a PNG verificada)
+     - parihuela.png: 698,422 bytes | 600x399 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - picarones.png: 604,777 bytes | 600x400 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - suspiro_limena.png: 533,090 bytes | 450x600 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
+     - tiradito_aji.png: 697,195 bytes | 572x600 px | entrop├¡a=7.99 bits/byte (Fotograf├¡a PNG verificada)
 ======================================================================
 TODAS LAS VERIFICACIONES EN POSTGRESQL 18 PASARON EXITOSAMENTE (EXIT=0)
 ======================================================================
