@@ -110,4 +110,26 @@ urlpatterns = [
         views.kds_api_comandas,
         name="kds_api_comandas",
     ),
+    # Impresión térmica ESC/POS de 80 mm: cola, reintentos y pre-cuenta (PRB-58 · P-11)
+    path("impresion/", views.impresion_monitor, name="impresion_monitor"),
+    path(
+        "impresion/<int:pk>/reintentar/",
+        views.impresion_reintentar,
+        name="impresion_reintentar",
+    ),
+    path(
+        "impresion/despachar/",
+        views.impresion_despachar_pendientes,
+        name="impresion_despachar",
+    ),
+    path(
+        "impresion/pedidos/<int:pedido_id>/imprimir/",
+        views.impresion_imprimir_pedido,
+        name="impresion_imprimir_pedido",
+    ),
+    path(
+        "impresion/api/cola/",
+        views.impresion_api_cola,
+        name="impresion_api_cola",
+    ),
 ]

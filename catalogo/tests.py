@@ -16,6 +16,22 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from catalogo.admin import CategoriaAdmin, ProductoAdmin
+from catalogo.impresion_service import (
+    ANCHO_80MM,
+    CMD_FEED_CUT,
+    CMD_INIT,
+    despachar_cola_pendientes,
+    despachar_trabajo,
+    encolar_comanda,
+    generar_escpos_comanda,
+    generar_escpos_precuenta,
+    generar_texto_comanda,
+    generar_texto_precuenta,
+    limpiar_buffer_simulado,
+    obtener_buffer_simulado,
+    reimprimir_pedido,
+    reintentar_trabajo,
+)
 from catalogo.kds_service import (
     avanzar_estado_comanda,
     avanzar_estado_item,
@@ -26,6 +42,7 @@ from catalogo.models import (
     Categoria,
     DetallePedido,
     EventoPedido,
+    ImpresionCola,
     Mesa,
     MovimientoStock,
     Pago,
@@ -183,6 +200,8 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(Usuario)
         if EventoPedido._meta.db_table not in existentes:
             editor.create_model(EventoPedido)
+        if ImpresionCola._meta.db_table not in existentes:
+            editor.create_model(ImpresionCola)
 
 
 class CatalogoModelTests(TestCase):
@@ -2091,3 +2110,318 @@ class KDSCocinaTests(TestCase):
         self.assertEqual(self.ceviche.stock_disponible, 23)
         self.assertEqual(self.jalea.stock_disponible, 14)
         self.assertEqual(MovimientoStock.objects.filter(pedido=ped).count(), 2)
+
+
+class ImpresionTermicaTests(TestCase):
+    """Pruebas unitarias e integración para el spooler de impresión térmica 80 mm (PRB-58)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        limpiar_buffer_simulado()
+        self.cat_fria = Categoria.objects.create(nombre="Ceviches y Entradas Frías")
+        self.cat_caliente = Categoria.objects.create(nombre="Segundos y Calientes")
+        self.cat_bebida = Categoria.objects.create(nombre="Bebidas")
+
+        self.ceviche = Producto.objects.create(
+            nombre="Ceviche Clásico Casa Blanca",
+            precio=Decimal("48.00"),
+            categoria=self.cat_fria,
+            disponible=True,
+        )
+        self.jalea = Producto.objects.create(
+            nombre="Jalea Mixta Real de Mariscos",
+            precio=Decimal("58.00"),
+            categoria=self.cat_caliente,
+            disponible=True,
+        )
+        self.chicha = Producto.objects.create(
+            nombre="Chicha Morada de la Casa (1 L)",
+            precio=Decimal("16.00"),
+            categoria=self.cat_bebida,
+            disponible=True,
+        )
+
+        self.mesa4 = Mesa.objects.create(
+            numero=4, capacidad=6, ubicacion="Primer piso - Familiar"
+        )
+
+        self.rol_admin = Rol.objects.create(nombre=Rol.ROL_ADMIN)
+        self.rol_cajero = Rol.objects.create(nombre=Rol.ROL_CAJERO)
+        self.rol_mozo = Rol.objects.create(nombre=Rol.ROL_MOZO)
+
+        self.mozo = Usuario.objects.create(
+            username="mozo_salon_01", rol=self.rol_mozo, pin_hash="x"
+        )
+
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="cajero_staff_print",
+            password="PasswordStaff!2026",
+            is_staff=True,
+        )
+        self.non_staff_user = User.objects.create_user(
+            username="mozo_normal_print",
+            password="PasswordMozo!2026",
+            is_staff=False,
+        )
+
+        self.pedido = Pedido.objects.create(
+            mesa=self.mesa4,
+            mozo_id=self.mozo.id,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("170.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=self.pedido,
+            producto=self.ceviche,
+            cantidad=2,
+            notas="Sin culantro, extra ají limo",
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("96.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=self.pedido,
+            producto=self.jalea,
+            cantidad=1,
+            notas="Tártara aparte",
+            precio_unitario=Decimal("58.00"),
+            subtotal=Decimal("58.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=self.pedido,
+            producto=self.chicha,
+            cantidad=1,
+            notas="",
+            precio_unitario=Decimal("16.00"),
+            subtotal=Decimal("16.00"),
+        )
+
+    def test_formateo_comanda_48_columnas(self):
+        """PRB-58: Formato de comanda respeta ancho de 48 columnas y datos de estación."""
+        texto = generar_texto_comanda(
+            self.pedido, estacion=Producto.ESTACION_BARRA_FRIA
+        )
+        lineas = texto.splitlines()
+
+        for linea in lineas:
+            self.assertLessEqual(len(linea), ANCHO_80MM)
+
+        self.assertIn("COMANDA DE COCINA", texto)
+        self.assertIn("BARRA_FRIA", texto)
+        self.assertIn(f"#{self.pedido.id}", texto)
+        self.assertIn("Mesa 4", texto)
+        self.assertIn("CEVICHE CLÁSICO CASA BLANCA", texto)
+        self.assertIn("Sin culantro, extra ají limo", texto)
+        self.assertNotIn("JALEA MIXTA", texto)
+
+    def test_formateo_precuenta_48_columnas_e_igv(self):
+        """PRB-58: Pre-cuenta formatea 48 cols, desglose de IGV y aviso no fiscal."""
+        texto = generar_texto_precuenta(self.pedido)
+        lineas = texto.splitlines()
+
+        for linea in lineas:
+            self.assertLessEqual(len(linea), ANCHO_80MM)
+
+        self.assertIn("CEVICHERIA LA CASA BLANCA", texto)
+        self.assertIn("PRE-CUENTA DE CONSUMO", texto)
+        self.assertIn("CONTROL INTERNO - NO FISCAL", texto)
+        self.assertIn("170.00", texto)
+        self.assertIn("OP. GRAVADA", texto)
+        self.assertIn("I.G.V. (18% incluido)", texto)
+
+    def test_generacion_secuencias_escpos_bytes(self):
+        """PRB-58: Secuencias binarias ESC/POS incluyen reset, codificación y corte."""
+        b_comanda = generar_escpos_comanda(
+            self.pedido, estacion=Producto.ESTACION_COCINA_CALIENTE
+        )
+        self.assertTrue(b_comanda.startswith(CMD_INIT))
+        self.assertTrue(b_comanda.endswith(CMD_FEED_CUT))
+        self.assertIn(b"JALEA MIXTA", b_comanda)
+
+        b_cuenta = generar_escpos_precuenta(self.pedido)
+        self.assertTrue(b_cuenta.startswith(CMD_INIT))
+        self.assertTrue(b_cuenta.endswith(CMD_FEED_CUT))
+        self.assertIn(b"CASA BLANCA", b_cuenta)
+
+    def test_encolado_y_despacho_modo_dummy(self):
+        """PRB-58: encolar y despachar en modo DUMMY almacena en buffer y marca IMPRESO."""
+        limpiar_buffer_simulado()
+        trabajo = encolar_comanda(
+            self.pedido,
+            estacion=Producto.ESTACION_BARRA_FRIA,
+            despachar_inmediato=True,
+            modo="DUMMY",
+        )
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(trabajo.intentos, 1)
+        self.assertIsNotNone(trabajo.fecha_impresion)
+        self.assertIsNone(trabajo.error)
+
+        buf = obtener_buffer_simulado()
+        self.assertEqual(len(buf), 1)
+        self.assertGreater(buf[0]["bytes_len"], 50)
+
+    def test_manejo_errores_y_limite_reintentos(self):
+        """PRB-58: Errores de conexión incrementan intentos y marcan FALLIDO tras 3 intentos."""
+        trabajo = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            estacion="COCINA_CALIENTE",
+            payload="Comanda test",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+
+        # Intento 1
+        exito1, _ = despachar_trabajo(trabajo.id, modo="FAIL_SIMULATED")
+        self.assertFalse(exito1)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.intentos, 1)
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_PENDIENTE)
+        self.assertIn("Fallo simulado", trabajo.error)
+
+        # Intento 2
+        exito2, _ = despachar_trabajo(trabajo.id, modo="FAIL_SIMULATED")
+        self.assertFalse(exito2)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.intentos, 2)
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_PENDIENTE)
+
+        # Intento 3
+        exito3, _ = despachar_trabajo(trabajo.id, modo="FAIL_SIMULATED")
+        self.assertFalse(exito3)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.intentos, 3)
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_FALLIDO)
+
+    def test_reintentar_trabajo_fallido(self):
+        """PRB-58: reintentar_trabajo resetea estado y despacha de nuevo con éxito."""
+        trabajo = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            estacion="CAJA",
+            payload="Precuenta test",
+            estado=ImpresionCola.ESTADO_FALLIDO,
+            intentos=3,
+            error="Error previo",
+        )
+
+        exito, _ = reintentar_trabajo(trabajo.id, modo="DUMMY")
+        self.assertTrue(exito)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(trabajo.intentos, 1)
+        self.assertIsNone(trabajo.error)
+
+    def test_despacho_cola_pendientes_fifo(self):
+        """PRB-58: despachar_cola_pendientes procesa trabajos en espera."""
+        t1 = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            payload="Comanda 1",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+        )
+        t2 = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            payload="Precuenta 2",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+        )
+
+        resultados = despachar_cola_pendientes(modo="DUMMY")
+        self.assertEqual(len(resultados), 2)
+        self.assertTrue(all(r["exito"] for r in resultados))
+
+        t1.refresh_from_db()
+        t2.refresh_from_db()
+        self.assertEqual(t1.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(t2.estado, ImpresionCola.ESTADO_IMPRESO)
+
+    def test_reimprimir_pedido_comanda_y_precuenta(self):
+        """PRB-58: reimprimir_pedido crea y despacha un nuevo trabajo para el pedido."""
+        t_com = reimprimir_pedido(
+            self.pedido.id, tipo=ImpresionCola.TIPO_COMANDA, modo="DUMMY"
+        )
+        self.assertIsNotNone(t_com)
+        self.assertEqual(t_com.tipo, ImpresionCola.TIPO_COMANDA)
+        self.assertEqual(t_com.estado, ImpresionCola.ESTADO_IMPRESO)
+
+        t_pre = reimprimir_pedido(
+            self.pedido.id, tipo=ImpresionCola.TIPO_PRECUENTA, modo="DUMMY"
+        )
+        self.assertIsNotNone(t_pre)
+        self.assertEqual(t_pre.tipo, ImpresionCola.TIPO_PRECUENTA)
+        self.assertEqual(t_pre.estado, ImpresionCola.ESTADO_IMPRESO)
+
+    def test_vistas_monitor_impresion_seguridad_staff(self):
+        """PRB-58: /impresion/ exige staff y renderiza tablero de cola."""
+        # Anónimo
+        r_anon = self.client.get("/impresion/")
+        self.assertEqual(r_anon.status_code, 302)
+
+        # No staff
+        self.client.force_login(self.non_staff_user)
+        r_no_staff = self.client.get("/impresion/")
+        self.assertEqual(r_no_staff.status_code, 302)
+
+        # Staff entra
+        self.client.force_login(self.staff_user)
+        ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            payload="Comanda en monitor",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+        )
+        r_ok = self.client.get("/impresion/")
+        self.assertEqual(r_ok.status_code, 200)
+        self.assertContains(r_ok, "Cola de Impresión Térmica 80 mm")
+        self.assertContains(r_ok, "Epson TM-T20III")
+
+    def test_acciones_reintentar_y_despachar_endpoints(self):
+        """PRB-58: POST a reintentar y despachar funciona con HTML y AJAX."""
+        self.client.force_login(self.staff_user)
+        trabajo = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            payload="Comanda reintento",
+            estado=ImpresionCola.ESTADO_FALLIDO,
+            intentos=3,
+        )
+
+        # POST reintentar HTML
+        r_post = self.client.post(f"/impresion/{trabajo.id}/reintentar/")
+        self.assertEqual(r_post.status_code, 302)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_IMPRESO)
+
+        # POST reintentar AJAX
+        trabajo.estado = ImpresionCola.ESTADO_FALLIDO
+        trabajo.save()
+        r_ajax = self.client.post(
+            f"/impresion/{trabajo.id}/reintentar/",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(r_ajax.status_code, 200)
+        self.assertTrue(r_ajax.json()["ok"])
+
+    def test_impresion_api_cola_json(self):
+        """PRB-58: GET /impresion/api/cola/ devuelve JSON de sincronización."""
+        self.client.force_login(self.staff_user)
+        ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            payload="Precuenta API",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+        )
+
+        resp = self.client.get("/impresion/api/cola/")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("total_pendientes", data)
+        self.assertIn("trabajos", data)
+        self.assertGreaterEqual(len(data["trabajos"]), 1)

@@ -5,6 +5,7 @@ from django.utils.translation import ngettext
 from .models import (
     Categoria,
     EventoPedido,
+    ImpresionCola,
     MovimientoStock,
     Pago,
     Producto,
@@ -244,3 +245,38 @@ class EventoPedidoAdmin(admin.ModelAdmin):
     list_filter = ("estado_nuevo", "estado_anterior")
     search_fields = ("pedido__id", "motivo")
     ordering = ("-fecha", "-id")
+
+
+@admin.register(ImpresionCola)
+class ImpresionColaAdmin(admin.ModelAdmin):
+    """Monitoreo y administración de la cola de impresión térmica de 80 mm (PRB-58)."""
+
+    list_display = (
+        "id",
+        "fecha_creacion",
+        "tipo",
+        "estacion",
+        "pedido",
+        "estado",
+        "intentos",
+        "fecha_impresion",
+    )
+    list_filter = ("estado", "tipo", "estacion")
+    search_fields = ("pedido__id", "payload", "error")
+    ordering = ("-fecha_creacion", "-id")
+    actions = ["reintentar_trabajos_seleccionados"]
+
+    @admin.action(description="Reintentar trabajos de impresión seleccionados")
+    def reintentar_trabajos_seleccionados(self, request, queryset):
+        from .impresion_service import reintentar_trabajo
+
+        reintentados = 0
+        for trabajo in queryset:
+            exito, _ = reintentar_trabajo(trabajo.id)
+            if exito:
+                reintentados += 1
+        self.message_user(
+            request,
+            f"Se reintentaron {reintentados} trabajos de impresión.",
+            messages.SUCCESS,
+        )

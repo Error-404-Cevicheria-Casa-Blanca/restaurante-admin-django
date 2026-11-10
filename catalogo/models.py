@@ -769,6 +769,109 @@ class EventoPedido(models.Model):
         return f"Pedido #{self.pedido_id}: {transicion} ({self.fecha})"
 
 
+class ImpresionCola(models.Model):
+    """Cola de trabajos de impresión para tickets y comandas térmicas de 80 mm (PRB-58 / ADR-02).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'impresion_cola' es
+    gestionada exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    TIPO_COMANDA = "COMANDA"
+    TIPO_PRECUENTA = "PRECUENTA"
+    TIPOS = (
+        (TIPO_COMANDA, "Comanda de Cocina / Barra"),
+        (TIPO_PRECUENTA, "Pre-cuenta de Mesa"),
+    )
+
+    ESTADO_PENDIENTE = "PENDIENTE"
+    ESTADO_IMPRESO = "IMPRESO"
+    ESTADO_FALLIDO = "FALLIDO"
+    ESTADOS = (
+        (ESTADO_PENDIENTE, "Pendiente de Impresión"),
+        (ESTADO_IMPRESO, "Impreso Correctamente"),
+        (ESTADO_FALLIDO, "Fallido"),
+    )
+
+    pedido = models.ForeignKey(
+        Pedido,
+        on_delete=models.CASCADE,
+        related_name="trabajos_impresion",
+        null=True,
+        blank=True,
+        db_column="pedido_id",
+        verbose_name="Pedido",
+    )
+    tipo = models.CharField(
+        max_length=20,
+        choices=TIPOS,
+        verbose_name="Tipo de Impresión",
+    )
+    estacion = models.CharField(
+        max_length=30,
+        null=True,
+        blank=True,
+        verbose_name="Estación de Destino",
+    )
+    payload = models.TextField(
+        verbose_name="Payload / Contenido del Ticket",
+    )
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default=ESTADO_PENDIENTE,
+        verbose_name="Estado de Impresión",
+    )
+    intentos = models.IntegerField(
+        default=0,
+        verbose_name="Intentos Realizados",
+    )
+    error = models.TextField(
+        null=True,
+        blank=True,
+        verbose_name="Último Error Registrado",
+    )
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Fecha de Encolado",
+    )
+    fecha_impresion = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Fecha de Despacho",
+    )
+
+    class Meta:
+        db_table = "impresion_cola"
+        managed = False
+        verbose_name = "Trabajo de Impresión"
+        verbose_name_plural = "Cola de Impresión"
+        ordering = ["-fecha_creacion", "-id"]
+
+    def __str__(self):
+        ped_label = f"#{self.pedido_id}" if self.pedido_id else "S/N"
+        return f"Impresión #{self.id} [{self.tipo}] Pedido {ped_label} ({self.estado})"
+
+    @property
+    def es_comanda(self):
+        return self.tipo == self.TIPO_COMANDA
+
+    @property
+    def es_precuenta(self):
+        return self.tipo == self.TIPO_PRECUENTA
+
+    @property
+    def esta_pendiente(self):
+        return self.estado == self.ESTADO_PENDIENTE
+
+    @property
+    def esta_impreso(self):
+        return self.estado == self.ESTADO_IMPRESO
+
+    @property
+    def esta_fallido(self):
+        return self.estado == self.ESTADO_FALLIDO
+
+
 class Rol(models.Model):
     """Rol operativo del personal en la tabla compartida 'rol' (PRB-52 / D7).
 
