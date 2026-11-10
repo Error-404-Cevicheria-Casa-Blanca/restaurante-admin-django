@@ -5,6 +5,7 @@ distribución de 13 mesas (Piso 1 y Piso 2), roles canónicos y cuentas operativ
 con hashes BCrypt cost 10 en `clave_hash` y `pin_hash` (Regla D7 y Regla D8).
 """
 
+from datetime import time
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from .models import (
     Producto,
     Rol,
     SesionCaja,
+    Terminal,
+    Turno,
     Usuario,
 )
 from .sqlite_bootstrap import asegurar_tablas_sqlite
@@ -202,6 +205,16 @@ MESAS_PRODUCCION = (
     (13, 8, "Segundo piso - Terraza VIP"),
 )
 
+TURNOS_PRODUCCION = (
+    ("Mañana", time(8, 0), time(16, 0), True),
+    ("Tarde", time(16, 0), time(23, 30), True),
+)
+
+TERMINALES_PRODUCCION = (
+    ("TERM-01", "Tablet Salón Principal", True),
+    ("TERM-02", "Tablet Segundo Piso / Terraza", True),
+)
+
 
 def cargar_datos_produccion():
     """Ejecuta de forma transaccional e idempotente la carga oficial PRB-52."""
@@ -345,6 +358,42 @@ def cargar_datos_produccion():
                 mesa_obj.save(update_fields=["capacidad", "ubicacion"])
                 mesas_actualizadas += 1
 
+        # 6. Turnos de salón y terminales POS oficiales (PRB-84)
+        turnos_creados = 0
+        for nombre_turno, hora_ini, hora_fin, activo in TURNOS_PRODUCCION:
+            turno_obj, creado = Turno.objects.get_or_create(
+                nombre=nombre_turno,
+                defaults={
+                    "hora_inicio": hora_ini,
+                    "hora_fin": hora_fin,
+                    "activo": activo,
+                },
+            )
+            if creado:
+                turnos_creados += 1
+            elif (
+                turno_obj.hora_inicio != hora_ini
+                or turno_obj.hora_fin != hora_fin
+                or turno_obj.activo != activo
+            ):
+                turno_obj.hora_inicio = hora_ini
+                turno_obj.hora_fin = hora_fin
+                turno_obj.activo = activo
+                turno_obj.save(update_fields=["hora_inicio", "hora_fin", "activo"])
+
+        terminales_creadas = 0
+        for codigo_term, nombre_term, activo in TERMINALES_PRODUCCION:
+            term_obj, creada = Terminal.objects.get_or_create(
+                codigo=codigo_term,
+                defaults={"nombre": nombre_term, "activo": activo},
+            )
+            if creada:
+                terminales_creadas += 1
+            elif term_obj.nombre != nombre_term or term_obj.activo != activo:
+                term_obj.nombre = nombre_term
+                term_obj.activo = activo
+                term_obj.save(update_fields=["nombre", "activo"])
+
     return {
         "roles_creados": roles_creados,
         "usuarios_creados": usuarios_creados,
@@ -354,6 +403,8 @@ def cargar_datos_produccion():
         "platos_actualizados": platos_actualizados,
         "mesas_creadas": mesas_creadas,
         "mesas_actualizadas": mesas_actualizadas,
+        "turnos_creados": turnos_creados,
+        "terminales_creadas": terminales_creadas,
     }
 
 
@@ -413,6 +464,20 @@ def auditar_datos_produccion():
     if not esperadas.issubset(numeros_mesas):
         errores.append(f"Faltan mesas oficiales: {sorted(esperadas - numeros_mesas)}")
 
+    turnos_db = set(Turno.objects.values_list("nombre", flat=True))
+    turnos_esperados = {t[0] for t in TURNOS_PRODUCCION}
+    if not turnos_esperados.issubset(turnos_db):
+        errores.append(
+            f"Faltan turnos oficiales: {sorted(turnos_esperados - turnos_db)}"
+        )
+
+    terminales_db = set(Terminal.objects.values_list("codigo", flat=True))
+    terminales_esperadas = {t[0] for t in TERMINALES_PRODUCCION}
+    if not terminales_esperadas.issubset(terminales_db):
+        errores.append(
+            f"Faltan terminales oficiales: {sorted(terminales_esperadas - terminales_db)}"
+        )
+
     return {
         "ok": len(errores) == 0,
         "errores": errores,
@@ -424,4 +489,8 @@ def auditar_datos_produccion():
             nombre__in=nombres_oficiales
         ).count(),
         "mesas_total": Mesa.objects.filter(numero__in=esperadas).count(),
+        "turnos_total": Turno.objects.filter(nombre__in=turnos_esperados).count(),
+        "terminales_total": Terminal.objects.filter(
+            codigo__in=terminales_esperadas
+        ).count(),
     }

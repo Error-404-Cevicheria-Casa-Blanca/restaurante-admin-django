@@ -182,4 +182,117 @@
     {% endif %}
   </section>
 </div>
+
+<!-- Turnos de Salón, Terminales POS y Auditoría de Sesiones de Mozo (PRB-84) -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
+  <section class="card">
+    <h2 class="card-title" style="margin-bottom:12px;">Turnos de Salón Configurados (PRB-84)</h2>
+    {% if turnos %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Turno</th>
+            <th>Horario Operativo</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in turnos %}
+          <tr>
+            <td><span class="dish-name">{{ t.nombre }}</span></td>
+            <td><code>{{ t.horario_display }}</code></td>
+            <td>
+              {% if t.activo %}
+              <span class="badge badge-success">Activo</span>
+              {% else %}
+              <span class="badge badge-warning">Inactivo</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="card-meta">Sin turnos registrados.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2 class="card-title" style="margin-bottom:12px;">Terminales Físicas POS (Tablets · PRB-84)</h2>
+    {% if terminales %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Nombre / Ubicación</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for term in terminales %}
+          <tr>
+            <td><code>{{ term.codigo }}</code></td>
+            <td><span class="dish-name">{{ term.nombre }}</span></td>
+            <td>
+              {% if term.activo %}
+              <span class="badge badge-success">Activa</span>
+              {% else %}
+              <span class="badge badge-warning">Inactiva</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="card-meta">Sin terminales registradas.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card" style="margin-top:20px;">
+  <h2 class="card-title" style="margin-bottom:12px;">Auditoría de Sesiones de Mozo por Terminal y Turno (PRB-84)</h2>
+  {% if sesiones_mozo %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Mozo / Usuario</th>
+          <th>Terminal</th>
+          <th>Turno</th>
+          <th>Inicio</th>
+          <th>Fin</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sesiones_mozo %}
+        <tr>
+          <td>#{{ s.id }}</td>
+          <td><span class="dish-name">{{ s.usuario.username }}</span></td>
+          <td><code>{{ s.terminal.codigo }}</code> ({{ s.terminal.nombre }})</td>
+          <td>{{ s.turno.nombre }}</td>
+          <td>{{ s.inicio|date:"d/m/Y H:i" }}</td>
+          <td>{{ s.fin|date:"d/m/Y H:i"|default:"En curso" }}</td>
+          <td>
+            {% if s.esta_activa %}
+            <span class="badge badge-success">Activa</span>
+            {% else %}
+            <span class="badge badge-outline">Cerrada</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="card-meta">No se registran sesiones de mozo aún.</p>
+  {% endif %}
+</section>
 {% endblock %}

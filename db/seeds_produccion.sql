@@ -315,4 +315,22 @@ ON CONFLICT (numero) DO UPDATE SET
     capacidad = EXCLUDED.capacidad,
     ubicacion = EXCLUDED.ubicacion;
 
+-- =============================================================================
+-- 6. TURNOS DE SALÓN Y TERMINALES POS (PRB-84)
+-- =============================================================================
+INSERT INTO turno (nombre, hora_inicio, hora_fin, activo) VALUES
+    ('Mañana', '08:00:00', '16:00:00', TRUE),
+    ('Tarde', '16:00:00', '23:30:00', TRUE)
+ON CONFLICT (nombre) DO UPDATE SET
+    hora_inicio = EXCLUDED.hora_inicio,
+    hora_fin = EXCLUDED.hora_fin,
+    activo = EXCLUDED.activo;
+
+INSERT INTO terminal (codigo, nombre, activo) VALUES
+    ('TERM-01', 'Tablet Salón Principal', TRUE),
+    ('TERM-02', 'Tablet Segundo Piso / Terraza', TRUE)
+ON CONFLICT (codigo) DO UPDATE SET
+    nombre = EXCLUDED.nombre,
+    activo = EXCLUDED.activo;
+
 COMMIT;

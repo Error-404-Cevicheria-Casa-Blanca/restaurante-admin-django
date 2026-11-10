@@ -51,6 +51,9 @@ from .models import (
     Producto,
     Rol,
     SesionCaja,
+    SesionMozo,
+    Terminal,
+    Turno,
     Usuario,
 )
 from .produccion_seeds import (
@@ -1724,11 +1727,24 @@ def _asegurar_roles_canonicos():
 
 @staff_required
 def personal_operativo(request):
-    """Gestión de usuarios operativos POS, roles, PIN BCrypt y auditoría PRB-52."""
+    """Gestión de usuarios operativos POS, roles, PIN BCrypt y auditoría PRB-52 / PRB-84."""
     _asegurar_roles_canonicos()
     usuarios = Usuario.objects.select_related("rol").order_by("rol_id", "username")
     roles = Rol.objects.order_by("id")
     auditoria = auditar_datos_produccion()
+
+    try:
+        turnos = list(Turno.objects.order_by("hora_inicio", "id"))
+        terminales = list(Terminal.objects.order_by("codigo"))
+        sesiones_mozo = list(
+            SesionMozo.objects.select_related("usuario", "terminal", "turno").order_by(
+                "-inicio", "-id"
+            )[:20]
+        )
+    except DatabaseError:
+        turnos = []
+        terminales = []
+        sesiones_mozo = []
 
     context = {
         "nav_active": "personal",
@@ -1739,6 +1755,9 @@ def personal_operativo(request):
         "total_usuarios": usuarios.count(),
         "total_con_pin": sum(1 for u in usuarios if u.tiene_pin),
         "total_bloqueados": sum(1 for u in usuarios if u.esta_bloqueado),
+        "turnos": turnos,
+        "terminales": terminales,
+        "sesiones_mozo": sesiones_mozo,
     }
     return render(request, "catalogo/personal.html", context)
 

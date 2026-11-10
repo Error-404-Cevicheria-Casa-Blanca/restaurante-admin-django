@@ -189,3 +189,43 @@ CREATE TABLE movimiento_stock (
 CREATE INDEX idx_movimiento_stock_producto ON movimiento_stock(producto_id, fecha);
 CREATE INDEX idx_movimiento_stock_pedido ON movimiento_stock(pedido_id, tipo);
 
+-- =============================================================================
+-- TABLA: turno (Turnos operativos de atención en salón - PRB-84)
+-- =============================================================================
+CREATE TABLE turno (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    hora_inicio TIME NOT NULL,
+    hora_fin TIME NOT NULL,
+    activo BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- =============================================================================
+-- TABLA: terminal (Tablets / terminales físicas registradas en el local - PRB-84)
+-- =============================================================================
+CREATE TABLE terminal (
+    id SERIAL PRIMARY KEY,
+    codigo VARCHAR(30) NOT NULL UNIQUE,
+    nombre VARCHAR(100) NOT NULL,
+    activo BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- =============================================================================
+-- TABLA: sesion_mozo (Auditoría de qué mozo usó qué tablet y en qué turno - PRB-84)
+-- =============================================================================
+CREATE TABLE sesion_mozo (
+    id SERIAL PRIMARY KEY,
+    usuario_id INT NOT NULL REFERENCES usuario(id) ON DELETE RESTRICT,
+    terminal_id INT NOT NULL REFERENCES terminal(id) ON DELETE RESTRICT,
+    turno_id INT NOT NULL REFERENCES turno(id) ON DELETE RESTRICT,
+    inicio TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fin TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_fk_sesion_mozo_usuario ON sesion_mozo(usuario_id);
+CREATE INDEX idx_fk_sesion_mozo_terminal ON sesion_mozo(terminal_id);
+CREATE INDEX idx_fk_sesion_mozo_turno ON sesion_mozo(turno_id);
+CREATE INDEX idx_sesion_mozo_turno_inicio ON sesion_mozo(turno_id, inicio);
+CREATE INDEX idx_sesion_mozo_activas ON sesion_mozo(usuario_id, fin);
+
+

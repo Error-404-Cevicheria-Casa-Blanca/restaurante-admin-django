@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from datetime import time
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +16,13 @@ from django.db import connection
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
-from catalogo.admin import CategoriaAdmin, ProductoAdmin
+from catalogo.admin import (
+    CategoriaAdmin,
+    ProductoAdmin,
+    SesionMozoAdmin,
+    TerminalAdmin,
+    TurnoAdmin,
+)
 from catalogo.impresion_service import (
     ANCHO_80MM,
     CMD_FEED_CUT,
@@ -50,6 +57,9 @@ from catalogo.models import (
     Producto,
     Rol,
     SesionCaja,
+    SesionMozo,
+    Terminal,
+    Turno,
     Usuario,
 )
 from catalogo.produccion_seeds import HASH_DEBIL_DEMO, auditar_datos_produccion
@@ -202,6 +212,12 @@ def _crear_tablas_unmanaged_si_no_existen():
             editor.create_model(EventoPedido)
         if ImpresionCola._meta.db_table not in existentes:
             editor.create_model(ImpresionCola)
+        if Turno._meta.db_table not in existentes:
+            editor.create_model(Turno)
+        if Terminal._meta.db_table not in existentes:
+            editor.create_model(Terminal)
+        if SesionMozo._meta.db_table not in existentes:
+            editor.create_model(SesionMozo)
 
 
 class CatalogoModelTests(TestCase):
@@ -2425,3 +2441,138 @@ class ImpresionTermicaTests(TestCase):
         self.assertIn("total_pendientes", data)
         self.assertIn("trabajos", data)
         self.assertGreaterEqual(len(data["trabajos"]), 1)
+
+
+class TurnosYTerminalesTests(TestCase):
+    """Pruebas unitarias e integrales para Turno, Terminal y SesionMozo (PRB-84)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff_user = User.objects.create_user(
+            username="admin_turnos",
+            password="AdminTurnos!2026",
+            is_staff=True,
+            is_superuser=True,
+        )
+        self.rol_mozo = Rol.objects.create(nombre="MOZO")
+        self.mozo = Usuario(username="mozo_salon_01", rol=self.rol_mozo)
+        self.mozo.set_password_bcrypt("MozoSalon#2026")
+        self.mozo.set_pin_bcrypt("1357")
+        self.mozo.save()
+
+    def test_modelos_turno_terminal_y_sesion_mozo(self):
+        """PRB-84: Creación, propiedades, representación y ciclo de vida de SesionMozo."""
+        turno_manana = Turno.objects.create(
+            nombre="Mañana",
+            hora_inicio=time(8, 0),
+            hora_fin=time(16, 0),
+            activo=True,
+        )
+        self.assertEqual(turno_manana.horario_display, "08:00 - 16:00")
+        self.assertEqual(str(turno_manana), "Mañana (08:00 - 16:00)")
+        self.assertFalse(Turno._meta.managed)
+        self.assertEqual(Turno._meta.db_table, "turno")
+
+        term1 = Terminal.objects.create(
+            codigo="TERM-01",
+            nombre="Tablet Salón Principal",
+            activo=True,
+        )
+        self.assertEqual(str(term1), "TERM-01 - Tablet Salón Principal")
+        self.assertFalse(Terminal._meta.managed)
+        self.assertEqual(Terminal._meta.db_table, "terminal")
+
+        sesion = SesionMozo.objects.create(
+            usuario=self.mozo,
+            terminal=term1,
+            turno=turno_manana,
+        )
+        self.assertTrue(sesion.esta_activa)
+        self.assertIn("Activa", str(sesion))
+        self.assertFalse(SesionMozo._meta.managed)
+        self.assertEqual(SesionMozo._meta.db_table, "sesion_mozo")
+
+        # Cerrar sesión de mozo
+        sesion.fin = timezone.now()
+        sesion.save(update_fields=["fin"])
+        sesion.refresh_from_db()
+        self.assertFalse(sesion.esta_activa)
+        self.assertIn("Cerrada", str(sesion))
+
+    def test_seeds_turnos_terminales_y_vista_personal(self):
+        """PRB-84: seed_produccion puebla turnos y terminales y los muestra en /personal/."""
+        call_command("seed_produccion")
+        auditoria = auditar_datos_produccion()
+        self.assertTrue(auditoria["ok"], auditoria["errores"])
+        self.assertEqual(auditoria["turnos_total"], 2)
+        self.assertEqual(auditoria["terminales_total"], 2)
+
+        t_manana = Turno.objects.get(nombre="Mañana")
+        t_tarde = Turno.objects.get(nombre="Tarde")
+        self.assertEqual(t_manana.horario_display, "08:00 - 16:00")
+        self.assertEqual(t_tarde.horario_display, "16:00 - 23:30")
+
+        term1 = Terminal.objects.get(codigo="TERM-01")
+        term2 = Terminal.objects.get(codigo="TERM-02")
+        self.assertTrue(term1.activo)
+        self.assertTrue(term2.activo)
+
+        SesionMozo.objects.create(
+            usuario=self.mozo,
+            terminal=term1,
+            turno=t_manana,
+        )
+
+        self.client.force_login(self.staff_user)
+        resp = self.client.get("/personal/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Turnos de Salón Configurados (PRB-84)")
+        self.assertContains(resp, "Terminales Físicas POS (Tablets · PRB-84)")
+        self.assertContains(resp, "TERM-01")
+        self.assertContains(resp, "TERM-02")
+        self.assertContains(resp, "08:00 - 16:00")
+        self.assertContains(resp, "16:00 - 23:30")
+        self.assertContains(resp, "mozo_salon_01")
+
+    def test_admin_registro_turno_terminal_sesion_mozo(self):
+        """PRB-84: Django Admin tiene registrados TurnoAdmin, TerminalAdmin y SesionMozoAdmin."""
+        site = AdminSite()
+        turno_admin = TurnoAdmin(Turno, site)
+        term_admin = TerminalAdmin(Terminal, site)
+        sesion_admin = SesionMozoAdmin(SesionMozo, site)
+
+        self.assertIn("nombre", turno_admin.list_display)
+        self.assertIn("codigo", term_admin.list_display)
+        self.assertIn("esta_activa", sesion_admin.list_display)
+
+    def test_archivos_ddl_v5_y_documentacion_existen(self):
+        """PRB-84: Verifica existencia y estructura de V5__turnos_terminales.sql y rollback."""
+        base = settings.BASE_DIR
+        v5_sql = (base / "db" / "migrations" / "V5__turnos_terminales.sql").read_text(
+            encoding="utf-8"
+        )
+        v5_rb = (
+            base / "db" / "migrations" / "V5__turnos_terminales_rollback.sql"
+        ).read_text(encoding="utf-8")
+        schema_sql = (base / "db" / "schema.sql").read_text(encoding="utf-8")
+        doc_md = (base / "docs" / "db" / "TURNOS-Y-TERMINALES.md").read_text(
+            encoding="utf-8"
+        )
+
+        for contenido in (v5_sql, schema_sql):
+            self.assertIn("CREATE TABLE", contenido)
+            self.assertIn("turno", contenido)
+            self.assertIn("terminal", contenido)
+            self.assertIn("sesion_mozo", contenido)
+            self.assertIn("idx_fk_sesion_mozo_usuario", contenido)
+
+        self.assertIn("DROP TABLE IF EXISTS sesion_mozo;", v5_rb)
+        self.assertIn("DROP TABLE IF EXISTS terminal;", v5_rb)
+        self.assertIn("DROP TABLE IF EXISTS turno;", v5_rb)
+        self.assertIn("TERM-01", doc_md)
+        self.assertIn("TERM-02", doc_md)

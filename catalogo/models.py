@@ -1015,3 +1015,137 @@ class Usuario(models.Model):
 
     def __str__(self):
         return f"{self.username} ({self.rol.nombre})"
+
+
+class Turno(models.Model):
+    """Turno operativo de atención en salón (PRB-84 / D7).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'turno' es gestionada
+    exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    TURNO_MANANA = "Mañana"
+    TURNO_TARDE = "Tarde"
+
+    nombre = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Nombre del Turno",
+    )
+    hora_inicio = models.TimeField(
+        verbose_name="Hora de Inicio",
+    )
+    hora_fin = models.TimeField(
+        verbose_name="Hora de Fin",
+    )
+    activo = models.BooleanField(
+        default=True,
+        verbose_name="Activo",
+    )
+
+    class Meta:
+        db_table = "turno"
+        managed = False
+        verbose_name = "Turno de Salón"
+        verbose_name_plural = "Turnos de Salón"
+        ordering = ["hora_inicio", "id"]
+
+    @property
+    def horario_display(self):
+        """Retorna el rango horario legible en formato HH:MM - HH:MM."""
+        ini = self.hora_inicio.strftime("%H:%M") if self.hora_inicio else "--:--"
+        fin = self.hora_fin.strftime("%H:%M") if self.hora_fin else "--:--"
+        return f"{ini} - {fin}"
+
+    def __str__(self):
+        return f"{self.nombre} ({self.horario_display})"
+
+
+class Terminal(models.Model):
+    """Terminal física (tablet) registrada en el restaurante (PRB-84 / D7).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'terminal' es gestionada
+    exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    codigo = models.CharField(
+        max_length=30,
+        unique=True,
+        verbose_name="Código de Terminal",
+    )
+    nombre = models.CharField(
+        max_length=100,
+        verbose_name="Nombre de la Terminal",
+    )
+    activo = models.BooleanField(
+        default=True,
+        verbose_name="Activa",
+    )
+
+    class Meta:
+        db_table = "terminal"
+        managed = False
+        verbose_name = "Terminal POS"
+        verbose_name_plural = "Terminales POS"
+        ordering = ["codigo"]
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre}"
+
+
+class SesionMozo(models.Model):
+    """Registro de auditoría de sesión de mozo por tablet y turno (PRB-84 / D7).
+
+    Regla D7 (docs/db/DDL-OWNERSHIP.md): la tabla 'sesion_mozo' es gestionada
+    exclusivamente por db/schema.sql en PostgreSQL (managed = False).
+    """
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.RESTRICT,
+        db_column="usuario_id",
+        related_name="sesiones_mozo",
+        verbose_name="Mozo / Usuario",
+    )
+    terminal = models.ForeignKey(
+        Terminal,
+        on_delete=models.RESTRICT,
+        db_column="terminal_id",
+        related_name="sesiones_mozo",
+        verbose_name="Terminal POS",
+    )
+    turno = models.ForeignKey(
+        Turno,
+        on_delete=models.RESTRICT,
+        db_column="turno_id",
+        related_name="sesiones_mozo",
+        verbose_name="Turno de Salón",
+    )
+    inicio = models.DateTimeField(
+        default=timezone.now,
+        verbose_name="Inicio de Sesión",
+    )
+    fin = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Fin de Sesión",
+    )
+
+    class Meta:
+        db_table = "sesion_mozo"
+        managed = False
+        verbose_name = "Sesión de Mozo"
+        verbose_name_plural = "Sesiones de Mozo"
+        ordering = ["-inicio", "-id"]
+
+    @property
+    def esta_activa(self):
+        """Indica si la sesión de mozo permanece abierta en la terminal."""
+        return self.fin is None
+
+    def __str__(self):
+        estado = "Activa" if self.esta_activa else "Cerrada"
+        return (
+            f"Sesión #{self.id}: {self.usuario.username} @ "
+            f"{self.terminal.codigo} ({self.turno.nombre}) [{estado}]"
+        )
