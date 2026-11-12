@@ -32,7 +32,7 @@ WHERE username = 'admin_test'
 
 UPDATE usuario
 SET clave_hash = '$2b$10$DKEHgzLn6shfGj/CuZTVR.UM5yPWvDNcG3xmqm1fvHrvzq6eEMUnW',
-    pin_hash = COALESCE(pin_hash, '$2b$10$nCEbqb1gjv2B9gH3BjYxhuYak2QeZcowFaNx1ecAo1ObCSuSu0og2')
+    pin_hash = COALESCE(pin_hash, '$2b$10$JJ9bi3XHqwhGnBIbOhmAp.99jDJjxHVceihmaUiT3I2qQTpmNs2j6')
 WHERE username = 'admin_test'
   AND clave_hash = '$2b$10$b5o6bC2KfOaSLwhhC8UEjuD1ySzwScC7ZuSj82CCM6PYI4iNyQJ0S';
 
@@ -44,7 +44,7 @@ INSERT INTO usuario (username, clave_hash, pin_hash, intentos_fallidos, bloquead
 SELECT
     'admin_casablanca',
     '$2b$10$DKEHgzLn6shfGj/CuZTVR.UM5yPWvDNcG3xmqm1fvHrvzq6eEMUnW',
-    '$2b$10$nCEbqb1gjv2B9gH3BjYxhuYak2QeZcowFaNx1ecAo1ObCSuSu0og2',
+    '$2b$10$JJ9bi3XHqwhGnBIbOhmAp.99jDJjxHVceihmaUiT3I2qQTpmNs2j6',
     0,
     NULL,
     id
@@ -62,7 +62,7 @@ INSERT INTO usuario (username, clave_hash, pin_hash, intentos_fallidos, bloquead
 SELECT
     'cajero_01',
     '$2b$10$q4uxzvPmonj4yAazKZTf9uRQzHhaOfREQBXIRzt0OZO.hlfAPrd/K',
-    '$2b$10$2am1ckanDtp87GRVfMnI7.Cs5rzqp1UxnL0ZDbxVyDF1SYpn2BNRi',
+    '$2b$10$qNl0e8xpzk64I4mtTOtQd.9uOgY1RYHUEc3Vn5DVMAZ.bYDyTnzZW',
     0,
     NULL,
     id
@@ -80,7 +80,7 @@ INSERT INTO usuario (username, clave_hash, pin_hash, intentos_fallidos, bloquead
 SELECT
     'mozo_01',
     '$2b$10$xPju1s2hMHa4jMUhW.vzCOT8Jxj7JeLs42H6DA73biyIBZXhBIXXO',
-    '$2b$10$GfpUH9Hzg3yIwfN81Rb5bOBBlsFwpWU/TjBIkDZOZCyhWDPGYj0F.',
+    '$2b$10$Y0AxPDE/zuSJu5isrxjsweae79qOReIo/AMqCR/qLDNj/71fR2Yc.',
     0,
     NULL,
     id
@@ -98,7 +98,7 @@ INSERT INTO usuario (username, clave_hash, pin_hash, intentos_fallidos, bloquead
 SELECT
     'mozo_02',
     '$2b$10$UdxWr.j7CveWqsLii4ohOeO4WJJVJRv.GHRvsier6SRf8aCZoc2la',
-    '$2b$10$/AzYAZN9wyMUOQO.jiaCmOa.LJFVNw52q.eBLel.5gmxj0x2i4suC',
+    '$2b$10$YcDb0JCf76EAgFeeIEBl6eMqs2Kc9VZsmw0ItYr8bjFkhQlATuJiS',
     0,
     NULL,
     id
@@ -116,7 +116,7 @@ INSERT INTO usuario (username, clave_hash, pin_hash, intentos_fallidos, bloquead
 SELECT
     'cocinero_01',
     '$2b$10$4LKw5u8HgC/DRp0t6It8beUPuY9PO/hUkphPwcuC16/qkMdo0TAAC',
-    '$2b$10$PLWdrtnbLZwZPumxGKSVLOPWIL.9aGcri2VPaO9ztWRlFyxpZ4sd2',
+    '$2b$10$ViC7HrkGyBxMnSis3znmDe1oTFMMrXYCyPob3vUThBPnEHVi8InxK',
     0,
     NULL,
     id

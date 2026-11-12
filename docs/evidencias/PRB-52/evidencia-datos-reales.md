@@ -17,12 +17,13 @@
 
 1. **4 Roles Operativos Canónicos (`rol`)**:
    - `ADMIN`, `MOZO`, `COCINERO`, `CAJERO`.
-2. **5 Cuentas Operativas Base con Contraseña Segura y PIN de 4 Dígitos (`usuario`)**:
-   - `admin_casablanca` (`ADMIN`) · Hash BCrypt verificado
-   - `cajero_01` (`CAJERO`) · Hash BCrypt verificado
-   - `mozo_01` (`MOZO` · Piso 1) · Hash BCrypt verificado
-   - `mozo_02` (`MOZO` · Piso 2) · Hash BCrypt verificado
-   - `cocinero_01` (`COCINERO` · Cocina / Barra Fría) · Hash BCrypt verificado
+2. **5 Cuentas Operativas Base con Contraseña Segura y PIN de 4 Dígitos (`usuario` · Rotados en PRB-96 / D5)**:
+   - `admin_casablanca` (`ADMIN`) · Hash BCrypt cost 10 rotado y verificado
+   - `cajero_01` (`CAJERO`) · Hash BCrypt cost 10 rotado y verificado
+   - `mozo_01` (`MOZO` · Piso 1) · Hash BCrypt cost 10 rotado y verificado
+   - `mozo_02` (`MOZO` · Piso 2) · Hash BCrypt cost 10 rotado y verificado
+   - `cocinero_01` (`COCINERO` · Cocina / Barra Fría) · Hash BCrypt cost 10 rotado y verificado
+   - Cero PINs en claro ni en seeds ni en `catalogo/tests.py` (validación sobre fixtures aislados de prueba).
    - Gestión y rotación en vivo disponible en `/personal/` (alta de personal, cambio de rol/clave/PIN y desbloqueo de cuentas tras intentos fallidos).
 3. **5 Categorías Oficiales y 15 Platos Marinos Reales con Precios y Fotos PNG Locales (`categoria`, `producto`)**:
    - **Entradas Marinas**: Leche de Tigre Clásica (`S/ 25.00`), Causa de Pulpa de Cangrejo (`S/ 32.00`), Choros a la Chalaca (`S/ 24.00`).

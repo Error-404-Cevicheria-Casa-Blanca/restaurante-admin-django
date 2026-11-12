@@ -1424,7 +1424,7 @@ class DatosRealesProduccionTests(TestCase):
             mozo.set_pin_bcrypt("12ab")
 
         mozo.set_password_bcrypt("MarinaSegura#2026")
-        mozo.set_pin_bcrypt("4815")
+        mozo.set_pin_bcrypt("1357")
         mozo.save()
 
         self.assertTrue(mozo.clave_hash.startswith("$2b$10$"))
@@ -1432,11 +1432,11 @@ class DatosRealesProduccionTests(TestCase):
         self.assertTrue(mozo.tiene_pin)
         self.assertTrue(mozo.check_password_bcrypt("MarinaSegura#2026"))
         self.assertFalse(mozo.check_password_bcrypt("incorrecta"))
-        self.assertTrue(mozo.check_pin_bcrypt("4815"))
+        self.assertTrue(mozo.check_pin_bcrypt("1357"))
         self.assertFalse(mozo.check_pin_bcrypt("0000"))
 
     def test_comando_seed_produccion_idempotente_y_fotos_verificadas(self):
-        """PRB-52: seed_produccion puebla carta (15), mesas (13), roles (4) y PINs sin duplicar."""
+        """PRB-52 / PRB-96: seed_produccion puebla carta, mesas, roles y PINs sin exponer PIN."""
         # Simular residuos previos de seed.sql (admin_test con password123 y plato demo)
         r_admin = Rol.objects.create(nombre="ADMIN")
         r_mozo = Rol.objects.create(nombre="MOZO")
@@ -1475,7 +1475,16 @@ class DatosRealesProduccionTests(TestCase):
 
         mozo1 = Usuario.objects.get(username="mozo_01")
         self.assertTrue(mozo1.tiene_pin)
-        self.assertTrue(mozo1.check_pin_bcrypt("3011"))
+        self.assertTrue(mozo1.pin_hash.startswith("$2b$10$"))
+        self.assertEqual(len(mozo1.pin_hash), 60)
+
+        # Validar verificación de PIN usando un usuario fixture aislado de prueba (PRB-96 / D5)
+        mozo_fixture = Usuario(username="mozo_fixture_test", rol=r_mozo)
+        mozo_fixture.set_password_bcrypt("FixtureSegura#2026")
+        mozo_fixture.set_pin_bcrypt("2468")
+        mozo_fixture.save()
+        self.assertTrue(mozo_fixture.check_pin_bcrypt("2468"))
+        self.assertFalse(mozo_fixture.check_pin_bcrypt("0000"))
 
     def test_personal_requiere_staff_autenticado(self):
         """PRB-52: /personal/ exige autenticación con permisos de staff."""
@@ -1502,13 +1511,13 @@ class DatosRealesProduccionTests(TestCase):
                 "username": "cajero_noche",
                 "rol": str(rol_cajero.id),
                 "password": "TurnoNoche!2026",
-                "pin": "7788",
+                "pin": "5678",
             },
         )
         self.assertEqual(resp_crear.status_code, 302)
         cajero = Usuario.objects.get(username="cajero_noche")
         self.assertTrue(cajero.check_password_bcrypt("TurnoNoche!2026"))
-        self.assertTrue(cajero.check_pin_bcrypt("7788"))
+        self.assertTrue(cajero.check_pin_bcrypt("5678"))
 
         # Simular bloqueo por intentos fallidos en el POS y desbloquear desde Django
         cajero.intentos_fallidos = 5
@@ -1522,18 +1531,18 @@ class DatosRealesProduccionTests(TestCase):
         self.assertFalse(cajero.esta_bloqueado)
         self.assertEqual(cajero.intentos_fallidos, 0)
 
-        # Rotar PIN a 9922 desde el formulario inline
+        # Rotar PIN a un nuevo valor de prueba desde el formulario inline
         resp_upd = self.client.post(
             f"/personal/{cajero.id}/credenciales/",
             {
                 "rol_id": str(rol_cajero.id),
                 "nueva_clave": "",
-                "nuevo_pin": "9922",
+                "nuevo_pin": "8765",
             },
         )
         self.assertEqual(resp_upd.status_code, 302)
         cajero.refresh_from_db()
-        self.assertTrue(cajero.check_pin_bcrypt("9922"))
+        self.assertTrue(cajero.check_pin_bcrypt("8765"))
 
         # Sincronizar seeds reales desde botón web
         resp_sync = self.client.post("/personal/sincronizar-produccion/")
@@ -2531,8 +2540,8 @@ class TurnosYTerminalesTests(TestCase):
         self.client.force_login(self.staff_user)
         resp = self.client.get("/personal/")
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Turnos de Salón Configurados (PRB-84)")
-        self.assertContains(resp, "Terminales Físicas POS (Tablets · PRB-84)")
+        self.assertContains(resp, "Turnos de Salón Configurados")
+        self.assertContains(resp, "Terminales Físicas POS (Tablets)")
         self.assertContains(resp, "TERM-01")
         self.assertContains(resp, "TERM-02")
         self.assertContains(resp, "08:00 - 16:00")

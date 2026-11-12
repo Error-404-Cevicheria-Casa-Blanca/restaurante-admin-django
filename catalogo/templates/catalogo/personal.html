@@ -7,14 +7,14 @@
   <div>
     <h1 class="page-title">Personal Operativo, Roles y PIN POS</h1>
     <p class="page-subtitle">
-      Gestión de credenciales BCrypt cost 10, PIN rápido de 4 dígitos y estado de datos reales de producción (PRB-52 · Reglas D7/D8).
+      Gestión de accesos del personal, asignación de roles y PIN de 4 dígitos para tablets de mozos.
     </p>
   </div>
   <div class="page-actions">
     <form method="post" action="{% url 'catalogo:personal_sync_seeds' %}">
       {% csrf_token %}
       <button type="submit" class="btn btn-primary">
-        Sincronizar Datos Reales (PRB-52)
+        Sincronizar Datos Reales
       </button>
     </form>
   </div>
@@ -95,7 +95,7 @@
         <label class="form-label" for="{{ form_usuario.pin.id_for_label }}">{{ form_usuario.pin.label }}</label>
         {{ form_usuario.pin }}
       </div>
-      <button type="submit" class="btn btn-primary" style="width:100%;">Registrar con PIN BCrypt</button>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Registrar Usuario con PIN</button>
     </form>
   </section>
 
@@ -122,7 +122,7 @@
             </td>
             <td>
               {% if u.tiene_pin %}
-              <span class="badge badge-success">PIN Activo (BCrypt)</span>
+              <span class="badge badge-success">PIN Activo</span>
               {% else %}
               <span class="badge badge-warning">Sin PIN</span>
               {% endif %}
@@ -178,15 +178,15 @@
       </table>
     </div>
     {% else %}
-    <p class="card-meta">Aún no hay cuentas operativas registradas. Usa «Sincronizar Datos Reales (PRB-52)» para poblar el personal base.</p>
+    <p class="card-meta">Aún no hay cuentas operativas registradas. Usa «Sincronizar Datos Reales» para poblar el personal base.</p>
     {% endif %}
   </section>
 </div>
 
-<!-- Turnos de Salón, Terminales POS y Auditoría de Sesiones de Mozo (PRB-84) -->
+<!-- Turnos de Salón, Terminales POS y Auditoría de Sesiones de Mozo -->
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
   <section class="card">
-    <h2 class="card-title" style="margin-bottom:12px;">Turnos de Salón Configurados (PRB-84)</h2>
+    <h2 class="card-title" style="margin-bottom:12px;">Turnos de Salón Configurados</h2>
     {% if turnos %}
     <div class="table-wrap">
       <table class="data-table">
@@ -220,7 +220,7 @@
   </section>
 
   <section class="card">
-    <h2 class="card-title" style="margin-bottom:12px;">Terminales Físicas POS (Tablets · PRB-84)</h2>
+    <h2 class="card-title" style="margin-bottom:12px;">Terminales Físicas POS (Tablets)</h2>
     {% if terminales %}
     <div class="table-wrap">
       <table class="data-table">
@@ -255,7 +255,7 @@
 </div>
 
 <section class="card" style="margin-top:20px;">
-  <h2 class="card-title" style="margin-bottom:12px;">Auditoría de Sesiones de Mozo por Terminal y Turno (PRB-84)</h2>
+  <h2 class="card-title" style="margin-bottom:12px;">Auditoría de Sesiones de Mozo por Terminal y Turno</h2>
   {% if sesiones_mozo %}
   <div class="table-wrap">
     <table class="data-table">
