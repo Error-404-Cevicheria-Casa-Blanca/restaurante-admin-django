@@ -44,9 +44,9 @@
     if (tip) tip.style.display = "none";
   }
 
-  /* --- Gráfico 1: Barras Doradas (Platos) + Curva Marina (Precio Promedio S/) --- */
-  function renderComboCategorias() {
-    const contenedor = document.getElementById("combo-chart-container");
+  /* --- Gráfico 1: Barras Doradas (Cantidad de Platos por Categoría) --- */
+  function renderBarrasPlatos() {
+    const contenedor = document.getElementById("barras-platos-chart-container");
     const dataScript = document.getElementById("chart-categorias-data");
     if (!contenedor || !dataScript) return;
 
@@ -59,22 +59,22 @@
 
     if (!datos.length) {
       contenedor.innerHTML =
-        '<div class="empty-state"><p>Registra categorías y platos para visualizar la comparativa.</p></div>';
+        '<div class="empty-state"><p>Registra categorías y platos para visualizar el gráfico.</p></div>';
       return;
     }
 
-    const W = 680;
-    const H = 265;
-    const padL = 56;
-    const padR = 46;
-    const padT = 18;
-    const padB = 54;
+    const W = 540;
+    const H = 260;
+    const padL = 42;
+    const padR = 24;
+    const padT = 26;
+    const padB = 48;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
 
-    const maxPrecioRaw = Math.max(...datos.map((d) => d.precio_promedio || 0), 10);
-    const maxPrecio = Math.ceil(maxPrecioRaw / 10) * 10;
-    const maxPlatos = Math.max(...datos.map((d) => d.total || 0), 4);
+    const maxTotalRaw = Math.max(...datos.map((d) => d.total || 0), 1);
+    const yMax = maxTotalRaw <= 4 ? 4 : (maxTotalRaw % 2 === 0 ? maxTotalRaw : maxTotalRaw + 1);
+    const pasos = 4;
 
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
@@ -82,10 +82,11 @@
     svg.style.width = "100%";
     svg.style.height = "auto";
 
-    const pasos = 5;
+    // Líneas guía horizontales y etiquetas del eje Y (enteros)
     for (let i = 0; i <= pasos; i++) {
       const ratio = i / pasos;
       const y = padT + plotH - ratio * plotH;
+      const val = Math.round(ratio * yMax);
 
       const line = document.createElementNS(ns, "line");
       line.setAttribute("x1", padL);
@@ -96,98 +97,272 @@
       line.setAttribute("stroke-width", "1");
       svg.appendChild(line);
 
-      const txtIzq = document.createElementNS(ns, "text");
-      txtIzq.setAttribute("x", padL - 8);
-      txtIzq.setAttribute("y", y + 4);
-      txtIzq.setAttribute("text-anchor", "end");
-      txtIzq.setAttribute("fill", "#94a3b8");
-      txtIzq.setAttribute("font-size", "10.5");
-      txtIzq.textContent = "S/ " + Math.round(ratio * maxPrecio);
-      svg.appendChild(txtIzq);
-
-      const txtDer = document.createElementNS(ns, "text");
-      txtDer.setAttribute("x", W - padR + 8);
-      txtDer.setAttribute("y", y + 4);
-      txtDer.setAttribute("text-anchor", "start");
-      txtDer.setAttribute("fill", "#94a3b8");
-      txtDer.setAttribute("font-size", "10.5");
-      txtDer.textContent = (ratio * maxPlatos).toFixed(1);
-      svg.appendChild(txtDer);
+      const txt = document.createElementNS(ns, "text");
+      txt.setAttribute("x", padL - 8);
+      txt.setAttribute("y", y + 4);
+      txt.setAttribute("text-anchor", "end");
+      txt.setAttribute("fill", "#94a3b8");
+      txt.setAttribute("font-size", "11");
+      txt.setAttribute("font-family", "inherit");
+      txt.textContent = String(val);
+      svg.appendChild(txt);
     }
 
     const stepX = plotW / datos.length;
-    const barW = Math.min(34, stepX * 0.42);
-    const puntosLinea = [];
+    const barW = Math.min(38, stepX * 0.46);
 
     datos.forEach((d, idx) => {
       const cx = padL + stepX * idx + stepX / 2;
-      const hBarra = (d.total / maxPlatos) * plotH;
+      const hBarra = yMax > 0 ? (d.total / yMax) * plotH : 0;
       const yBarra = padT + plotH - hBarra;
 
       const rect = document.createElementNS(ns, "rect");
       rect.setAttribute("x", cx - barW / 2);
       rect.setAttribute("y", yBarra);
       rect.setAttribute("width", barW);
-      rect.setAttribute("height", Math.max(hBarra, 2));
+      rect.setAttribute("height", Math.max(hBarra, 3));
       rect.setAttribute("rx", "5");
       rect.setAttribute("fill", "#dfc05a");
       rect.style.cursor = "pointer";
+      rect.style.transition = "opacity 0.15s ease";
 
       const infoHtml =
         `<strong>${escaparHtml(d.nombre)}</strong><br>` +
-        `Platos totales: ${d.total} (${d.disponibles} disp. / ${d.agotados} agot.)<br>` +
-        `Precio promedio: S/ ${Number(d.precio_promedio).toFixed(2)}`;
+        `Platos registrados: <strong>${d.total}</strong><br>` +
+        `• Disponibles: ${d.disponibles}<br>` +
+        `• Agotados: ${d.agotados}`;
 
+      rect.addEventListener("mouseenter", () => {
+        rect.style.opacity = "0.85";
+      });
       rect.addEventListener("mousemove", (e) => mostrarTooltip(e, infoHtml));
-      rect.addEventListener("mouseleave", ocultarTooltip);
+      rect.addEventListener("mouseleave", () => {
+        rect.style.opacity = "1";
+        ocultarTooltip();
+      });
       svg.appendChild(rect);
 
-      const yPrecio = padT + plotH - ((d.precio_promedio || 0) / maxPrecio) * plotH;
-      puntosLinea.push({ x: cx, y: yPrecio, infoHtml: infoHtml });
+      // Etiqueta de cantidad encima de cada barra
+      if (d.total > 0) {
+        const valTxt = document.createElementNS(ns, "text");
+        valTxt.setAttribute("x", cx);
+        valTxt.setAttribute("y", yBarra - 6);
+        valTxt.setAttribute("text-anchor", "middle");
+        valTxt.setAttribute("fill", "#786114");
+        valTxt.setAttribute("font-size", "11");
+        valTxt.setAttribute("font-weight", "600");
+        valTxt.setAttribute("font-family", "inherit");
+        valTxt.textContent = String(d.total);
+        svg.appendChild(valTxt);
+      }
 
+      // Nombre de la categoría
       const label = document.createElementNS(ns, "text");
       label.setAttribute("x", cx);
-      label.setAttribute("y", padT + plotH + 20);
+      label.setAttribute("y", padT + plotH + 18);
       label.setAttribute("text-anchor", "middle");
       label.setAttribute("fill", "#64748b");
       label.setAttribute("font-size", "11");
-      const corto = d.nombre.length > 16 ? d.nombre.slice(0, 15) + "…" : d.nombre;
+      label.setAttribute("font-family", "inherit");
+      const corto = d.nombre.length > 15 ? d.nombre.slice(0, 14) + "…" : d.nombre;
       label.textContent = corto;
       svg.appendChild(label);
     });
 
-    if (puntosLinea.length > 0) {
-      let pathD = `M ${puntosLinea[0].x} ${puntosLinea[0].y}`;
-      for (let i = 0; i < puntosLinea.length - 1; i++) {
-        const p0 = puntosLinea[i];
-        const p1 = puntosLinea[i + 1];
-        const midX = (p0.x + p1.x) / 2;
-        pathD += ` C ${midX} ${p0.y}, ${midX} ${p1.y}, ${p1.x} ${p1.y}`;
-      }
-      const path = document.createElementNS(ns, "path");
-      path.setAttribute("d", pathD);
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", "#0f4c5c");
-      path.setAttribute("stroke-width", "2.6");
-      svg.appendChild(path);
+    contenedor.innerHTML = "";
+    contenedor.appendChild(svg);
+  }
 
-      puntosLinea.forEach((pt) => {
+  /* --- Gráfico 2: Curva Marina (Precio Promedio por Categoría en S/) --- */
+  function renderCurvaPrecios() {
+    const contenedor = document.getElementById("precio-promedio-chart-container");
+    const dataScript = document.getElementById("chart-categorias-data");
+    if (!contenedor || !dataScript) return;
+
+    let datos = [];
+    try {
+      datos = JSON.parse(dataScript.textContent || "[]");
+    } catch (_) {
+      datos = [];
+    }
+
+    if (!datos.length) {
+      contenedor.innerHTML =
+        '<div class="empty-state"><p>Registra categorías y platos para visualizar los precios.</p></div>';
+      return;
+    }
+
+    const W = 540;
+    const H = 260;
+    const padL = 58;
+    const padR = 24;
+    const padT = 26;
+    const padB = 48;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+
+    const maxPrecioRaw = Math.max(...datos.map((d) => d.precio_promedio || 0), 10);
+    const maxPrecio = Math.ceil(maxPrecioRaw / 10) * 10;
+    const pasos = 4;
+
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.style.width = "100%";
+    svg.style.height = "auto";
+
+    // Gradiente para sombra suave bajo la curva
+    const defs = document.createElementNS(ns, "defs");
+    const grad = document.createElementNS(ns, "linearGradient");
+    grad.setAttribute("id", "grad-precio-marino");
+    grad.setAttribute("x1", "0");
+    grad.setAttribute("y1", "0");
+    grad.setAttribute("x2", "0");
+    grad.setAttribute("y2", "1");
+
+    const stop1 = document.createElementNS(ns, "stop");
+    stop1.setAttribute("offset", "0%");
+    stop1.setAttribute("stop-color", "#0f4c5c");
+    stop1.setAttribute("stop-opacity", "0.20");
+    grad.appendChild(stop1);
+
+    const stop2 = document.createElementNS(ns, "stop");
+    stop2.setAttribute("offset", "100%");
+    stop2.setAttribute("stop-color", "#0f4c5c");
+    stop2.setAttribute("stop-opacity", "0.02");
+    grad.appendChild(stop2);
+
+    defs.appendChild(grad);
+    svg.appendChild(defs);
+
+    // Líneas guía horizontales y etiquetas Y (Soles)
+    for (let i = 0; i <= pasos; i++) {
+      const ratio = i / pasos;
+      const y = padT + plotH - ratio * plotH;
+      const val = Math.round(ratio * maxPrecio);
+
+      const line = document.createElementNS(ns, "line");
+      line.setAttribute("x1", padL);
+      line.setAttribute("x2", W - padR);
+      line.setAttribute("y1", y);
+      line.setAttribute("y2", y);
+      line.setAttribute("stroke", "#eef2f7");
+      line.setAttribute("stroke-width", "1");
+      svg.appendChild(line);
+
+      const txt = document.createElementNS(ns, "text");
+      txt.setAttribute("x", padL - 8);
+      txt.setAttribute("y", y + 4);
+      txt.setAttribute("text-anchor", "end");
+      txt.setAttribute("fill", "#94a3b8");
+      txt.setAttribute("font-size", "11");
+      txt.setAttribute("font-family", "inherit");
+      txt.textContent = "S/ " + val;
+      svg.appendChild(txt);
+    }
+
+    const stepX = plotW / datos.length;
+    const puntos = [];
+
+    datos.forEach((d, idx) => {
+      const cx = padL + stepX * idx + stepX / 2;
+      const ratioPrecio = maxPrecio > 0 ? (d.precio_promedio || 0) / maxPrecio : 0;
+      const y = padT + plotH - ratioPrecio * plotH;
+
+      const infoHtml =
+        `<strong>${escaparHtml(d.nombre)}</strong><br>` +
+        `Precio promedio: <strong>S/ ${Number(d.precio_promedio || 0).toFixed(2)}</strong>`;
+
+      puntos.push({
+        x: cx,
+        y: y,
+        precio: d.precio_promedio || 0,
+        infoHtml: infoHtml,
+      });
+
+      // Nombre de la categoría
+      const label = document.createElementNS(ns, "text");
+      label.setAttribute("x", cx);
+      label.setAttribute("y", padT + plotH + 18);
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("fill", "#64748b");
+      label.setAttribute("font-size", "11");
+      label.setAttribute("font-family", "inherit");
+      const corto = d.nombre.length > 15 ? d.nombre.slice(0, 14) + "…" : d.nombre;
+      label.textContent = corto;
+      svg.appendChild(label);
+    });
+
+    if (puntos.length > 0) {
+      // Curva Bezier suave
+      let curveD = `M ${puntos[0].x} ${puntos[0].y}`;
+      for (let i = 0; i < puntos.length - 1; i++) {
+        const p0 = puntos[i];
+        const p1 = puntos[i + 1];
+        const midX = (p0.x + p1.x) / 2;
+        curveD += ` C ${midX} ${p0.y}, ${midX} ${p1.y}, ${p1.x} ${p1.y}`;
+      }
+
+      // Área rellena bajo la curva
+      const baseY = padT + plotH;
+      const areaD = `${curveD} L ${puntos[puntos.length - 1].x} ${baseY} L ${puntos[0].x} ${baseY} Z`;
+      const areaPath = document.createElementNS(ns, "path");
+      areaPath.setAttribute("d", areaD);
+      areaPath.setAttribute("fill", "url(#grad-precio-marino)");
+      svg.appendChild(areaPath);
+
+      // Trazo de línea principal
+      const linePath = document.createElementNS(ns, "path");
+      linePath.setAttribute("d", curveD);
+      linePath.setAttribute("fill", "none");
+      linePath.setAttribute("stroke", "#0f4c5c");
+      linePath.setAttribute("stroke-width", "2.8");
+      svg.appendChild(linePath);
+
+      // Puntos y etiquetas de valor en Soles
+      puntos.forEach((pt) => {
         const circle = document.createElementNS(ns, "circle");
         circle.setAttribute("cx", pt.x);
         circle.setAttribute("cy", pt.y);
-        circle.setAttribute("r", "4.5");
+        circle.setAttribute("r", "5");
         circle.setAttribute("fill", "#ffffff");
         circle.setAttribute("stroke", "#0f4c5c");
         circle.setAttribute("stroke-width", "2.5");
         circle.style.cursor = "pointer";
+
+        circle.addEventListener("mouseenter", () => {
+          circle.setAttribute("r", "7");
+        });
         circle.addEventListener("mousemove", (e) => mostrarTooltip(e, pt.infoHtml));
-        circle.addEventListener("mouseleave", ocultarTooltip);
+        circle.addEventListener("mouseleave", () => {
+          circle.setAttribute("r", "5");
+          ocultarTooltip();
+        });
         svg.appendChild(circle);
+
+        if (pt.precio > 0) {
+          const valTxt = document.createElementNS(ns, "text");
+          valTxt.setAttribute("x", pt.x);
+          valTxt.setAttribute("y", pt.y - 9);
+          valTxt.setAttribute("text-anchor", "middle");
+          valTxt.setAttribute("fill", "#0f4c5c");
+          valTxt.setAttribute("font-size", "10.5");
+          valTxt.setAttribute("font-weight", "600");
+          valTxt.setAttribute("font-family", "inherit");
+          valTxt.textContent = "S/ " + Math.round(pt.precio);
+          svg.appendChild(valTxt);
+        }
       });
     }
 
     contenedor.innerHTML = "";
     contenedor.appendChild(svg);
+  }
+
+  /* Compatibilidad con invocaciones heredadas */
+  function renderComboCategorias() {
+    renderBarrasPlatos();
+    renderCurvaPrecios();
   }
 
   /* --- Gráfico 2: Donut Interactivo (Disponibilidad / Categorías) --- */
@@ -485,11 +660,23 @@
     setInterval(refrescarOperativo, 30000);
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
-    renderComboCategorias();
+  function initPanel() {
+    renderBarrasPlatos();
+    renderCurvaPrecios();
     renderDonut("categorias");
     inicializarSwitchesAjax();
     inicializarModalesYLotes();
     iniciarPollingOperativo();
-  });
+  }
+
+  // Exportar para acceso seguro
+  window.renderBarrasPlatos = renderBarrasPlatos;
+  window.renderCurvaPrecios = renderCurvaPrecios;
+  window.renderDonut = renderDonut;
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initPanel);
+  } else {
+    initPanel();
+  }
 })();

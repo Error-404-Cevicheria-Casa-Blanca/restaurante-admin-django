@@ -11,6 +11,9 @@ from .models import (
     Producto,
     Rol,
     SesionCaja,
+    SesionMozo,
+    Terminal,
+    Turno,
     Usuario,
 )
 
@@ -280,3 +283,41 @@ class ImpresionColaAdmin(admin.ModelAdmin):
             f"Se reintentaron {reintentados} trabajos de impresión.",
             messages.SUCCESS,
         )
+
+
+@admin.register(Turno)
+class TurnoAdmin(admin.ModelAdmin):
+    """Administración y consulta de turnos de salón (PRB-84)."""
+
+    list_display = ("id", "nombre", "hora_inicio", "hora_fin", "activo")
+    list_filter = ("activo",)
+    search_fields = ("nombre",)
+    ordering = ("hora_inicio", "id")
+
+
+@admin.register(Terminal)
+class TerminalAdmin(admin.ModelAdmin):
+    """Administración y consulta de terminales físicas POS (PRB-84)."""
+
+    list_display = ("id", "codigo", "nombre", "activo")
+    list_filter = ("activo",)
+    search_fields = ("codigo", "nombre")
+    ordering = ("codigo",)
+
+
+@admin.register(SesionMozo)
+class SesionMozoAdmin(admin.ModelAdmin):
+    """Consulta de auditoría de sesiones de mozos por terminal y turno (PRB-84)."""
+
+    list_display = (
+        "id",
+        "usuario",
+        "terminal",
+        "turno",
+        "inicio",
+        "fin",
+        "esta_activa",
+    )
+    list_filter = ("turno", "terminal")
+    search_fields = ("usuario__username", "terminal__codigo", "turno__nombre")
+    ordering = ("-inicio", "-id")

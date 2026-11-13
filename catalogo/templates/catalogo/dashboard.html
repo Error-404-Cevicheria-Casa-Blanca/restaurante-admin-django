@@ -317,12 +317,12 @@
   {% endif %}
 </section>
 
-<!-- Gráficos Principales (2 Columnas) -->
-<section class="charts-grid">
+<!-- Gráficos Principales por Categoría (Separados en 2 Gráficos) -->
+<section class="charts-grid-duo">
   <div class="card">
     <div class="card-header">
       <div>
-        <h2 class="card-title">Platos y precio promedio por categoría</h2>
+        <h2 class="card-title">Platos registrados por categoría</h2>
       </div>
       <span class="card-meta">{{ total_categorias }} categorías activas</span>
     </div>
@@ -330,13 +330,28 @@
       <span class="legend-item">
         <span class="legend-swatch" style="background:#dfc05a;"></span> Platos registrados
       </span>
-      <span class="legend-item">
-        <span class="legend-line"></span> Precio promedio (S/)
-      </span>
     </div>
-    <div id="combo-chart-container" class="chart-stage"></div>
+    <div id="barras-platos-chart-container" class="chart-stage"></div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2 class="card-title">Precio promedio por categoría</h2>
+      </div>
+      <span class="card-meta">En Soles (S/)</span>
+    </div>
+    <div class="chart-legend">
+      <span class="legend-item">
+        <span class="legend-line" style="background:#0f4c5c;"></span> Precio promedio (S/)
+      </span>
+    </div>
+    <div id="precio-promedio-chart-container" class="chart-stage"></div>
+  </div>
+</section>
+
+<!-- Distribución y Resumen de Categorías -->
+<section class="charts-grid">
   <div class="card">
     <div class="card-header">
       <h2 class="card-title">Distribución de la carta</h2>
@@ -352,10 +367,57 @@
     <div id="donut-chart-container" class="chart-stage" style="min-height:225px;"></div>
     <div id="donut-legend" class="chart-legend" style="margin-top:8px;margin-bottom:0;"></div>
   </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Resumen por categoría</h2>
+      <a href="{% url 'catalogo:categorias' %}" class="card-link">Gestionar categorías</a>
+    </div>
+
+    {% if categorias %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Categoría</th>
+            <th>Platos</th>
+            <th>Activos</th>
+            <th>Promedio</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cat in categorias %}
+          <tr>
+            <td>
+              <a href="{% url 'catalogo:platos_list' %}?categoria={{ cat.id }}" class="dish-name" style="color:#1d4ed8;">
+                {{ cat.nombre }}
+              </a>
+            </td>
+            <td>{{ cat.total_platos }}</td>
+            <td>
+              <span class="badge-trend {% if cat.agotados == 0 and cat.total_platos > 0 %}up{% elif cat.disponibles == 0 %}warn{% else %}neutral{% endif %}">
+                {{ cat.disponibles }} disp.
+              </span>
+            </td>
+            <td style="font-weight:600;font-variant-numeric:tabular-nums;">
+              {% if cat.precio_promedio %}S/ {{ cat.precio_promedio|floatformat:2 }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <p>No hay categorías registradas.</p>
+      <a href="{% url 'catalogo:categorias' %}" class="btn btn-outline">Crear primera categoría</a>
+    </div>
+    {% endif %}
+  </div>
 </section>
 
-<!-- Tarjetas Operativas Inferiores -->
-<section class="bottom-grid">
+<!-- Tarjeta Operativa Inferior: Control rápido · Pesca del día -->
+<section class="bottom-single-grid">
   <div class="card">
     <div class="card-header">
       <h2 class="card-title">Control rápido · Pesca del día</h2>
@@ -413,53 +475,6 @@
         {% csrf_token %}
         <button type="submit" class="btn btn-blue">Cargar carta marina de ejemplo</button>
       </form>
-    </div>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title">Resumen por categoría</h2>
-      <a href="{% url 'catalogo:categorias' %}" class="card-link">Gestionar categorías</a>
-    </div>
-
-    {% if categorias %}
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Categoría</th>
-            <th>Platos</th>
-            <th>Activos</th>
-            <th>Promedio</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for cat in categorias %}
-          <tr>
-            <td>
-              <a href="{% url 'catalogo:platos_list' %}?categoria={{ cat.id }}" class="dish-name" style="color:#1d4ed8;">
-                {{ cat.nombre }}
-              </a>
-            </td>
-            <td>{{ cat.total_platos }}</td>
-            <td>
-              <span class="badge-trend {% if cat.agotados == 0 and cat.total_platos > 0 %}up{% elif cat.disponibles == 0 %}warn{% else %}neutral{% endif %}">
-                {{ cat.disponibles }} disp.
-              </span>
-            </td>
-            <td style="font-weight:600;font-variant-numeric:tabular-nums;">
-              {% if cat.precio_promedio %}S/ {{ cat.precio_promedio|floatformat:2 }}{% else %}—{% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <div class="empty-state">
-      <p>No hay categorías registradas.</p>
-      <a href="{% url 'catalogo:categorias' %}" class="btn btn-outline">Crear primera categoría</a>
     </div>
     {% endif %}
   </div>

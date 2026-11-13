@@ -586,9 +586,16 @@ a {
 }
 
 /* --- Grilla de Gráficos (2 Columnas) --- */
+.charts-grid-duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
 .charts-grid {
   display: grid;
-  grid-template-columns: 1.55fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -597,6 +604,13 @@ a {
   display: grid;
   grid-template-columns: 1.25fr 1fr;
   gap: 16px;
+}
+
+.bottom-single-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .card {
@@ -1594,8 +1608,10 @@ a {
   .kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+  .charts-grid-duo,
   .charts-grid,
-  .bottom-grid {
+  .bottom-grid,
+  .bottom-single-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -51,6 +51,9 @@ from .models import (
     Producto,
     Rol,
     SesionCaja,
+    SesionMozo,
+    Terminal,
+    Turno,
     Usuario,
 )
 from .produccion_seeds import (
@@ -139,6 +142,30 @@ def panel_login(request):
         username = (request.POST.get("username") or "").strip()
         password = request.POST.get("password") or ""
         user = authenticate(request, username=username, password=password)
+
+        # Si no autenticó en auth_user, verificar si es un usuario operativo con rol ADMIN
+        if user is None and username and password:
+            try:
+                u_op = (
+                    Usuario.objects.select_related("rol")
+                    .filter(username__iexact=username)
+                    .first()
+                )
+                if (
+                    u_op
+                    and u_op.rol.nombre == "ADMIN"
+                    and not u_op.esta_bloqueado
+                    and u_op.check_password_bcrypt(password)
+                ):
+                    User = get_user_model()
+                    user, _ = User.objects.get_or_create(username=u_op.username)
+                    user.set_password(password)
+                    user.is_staff = True
+                    user.is_active = True
+                    user.save()
+            except Exception:
+                pass
+
         if user is not None and user.is_active and user.is_staff:
             login(request, user)
             if next_url and url_has_allowed_host_and_scheme(
@@ -1724,11 +1751,24 @@ def _asegurar_roles_canonicos():
 
 @staff_required
 def personal_operativo(request):
-    """Gestión de usuarios operativos POS, roles, PIN BCrypt y auditoría PRB-52."""
+    """Gestión de usuarios operativos POS, roles, PIN BCrypt y auditoría PRB-52 / PRB-84."""
     _asegurar_roles_canonicos()
     usuarios = Usuario.objects.select_related("rol").order_by("rol_id", "username")
     roles = Rol.objects.order_by("id")
     auditoria = auditar_datos_produccion()
+
+    try:
+        turnos = list(Turno.objects.order_by("hora_inicio", "id"))
+        terminales = list(Terminal.objects.order_by("codigo"))
+        sesiones_mozo = list(
+            SesionMozo.objects.select_related("usuario", "terminal", "turno").order_by(
+                "-inicio", "-id"
+            )[:20]
+        )
+    except DatabaseError:
+        turnos = []
+        terminales = []
+        sesiones_mozo = []
 
     context = {
         "nav_active": "personal",
@@ -1739,6 +1779,9 @@ def personal_operativo(request):
         "total_usuarios": usuarios.count(),
         "total_con_pin": sum(1 for u in usuarios if u.tiene_pin),
         "total_bloqueados": sum(1 for u in usuarios if u.esta_bloqueado),
+        "turnos": turnos,
+        "terminales": terminales,
+        "sesiones_mozo": sesiones_mozo,
     }
     return render(request, "catalogo/personal.html", context)
 
@@ -1764,6 +1807,16 @@ def crear_usuario_operativo(request):
     nuevo.set_password_bcrypt(form.cleaned_data["password"])
     nuevo.set_pin_bcrypt(form.cleaned_data["pin"])
     nuevo.save()
+
+    # Si es ADMIN, sincronizar con auth_user para otorgar acceso al panel web
+    if nuevo.rol.nombre == "ADMIN":
+        User = get_user_model()
+        user_dj, _ = User.objects.get_or_create(username=nuevo.username)
+        user_dj.set_password(form.cleaned_data["password"])
+        user_dj.is_staff = True
+        user_dj.is_active = True
+        user_dj.save()
+
     messages.success(
         request,
         f"Usuario operativo '{nuevo.username}' ({nuevo.rol.nombre}) registrado "
@@ -1808,6 +1861,17 @@ def actualizar_credenciales_operativas(request, pk):
     usuario.bloqueado_hasta = None
     campos.extend(["intentos_fallidos", "bloqueado_hasta"])
     usuario.save(update_fields=campos)
+
+    # Si el usuario es o pasa a ser ADMIN, sincronizar con auth_user
+    if usuario.rol.nombre == "ADMIN":
+        User = get_user_model()
+        user_dj, _ = User.objects.get_or_create(username=usuario.username)
+        if nueva_clave.strip():
+            user_dj.set_password(nueva_clave)
+        user_dj.is_staff = True
+        user_dj.is_active = True
+        user_dj.save()
+
     messages.success(
         request,
         f"Credenciales BCrypt actualizadas para '{usuario.username}'.",

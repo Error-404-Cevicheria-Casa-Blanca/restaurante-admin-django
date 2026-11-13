@@ -314,6 +314,33 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 rol_id INTEGER NOT NULL REFERENCES rol(id) ON DELETE RESTRICT
             );
             """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS turno (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre VARCHAR(50) NOT NULL UNIQUE,
+                hora_inicio TIME NOT NULL,
+                hora_fin TIME NOT NULL,
+                activo BOOLEAN NOT NULL DEFAULT 1
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS terminal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo VARCHAR(30) NOT NULL UNIQUE,
+                nombre VARCHAR(100) NOT NULL,
+                activo BOOLEAN NOT NULL DEFAULT 1
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sesion_mozo (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER NOT NULL REFERENCES usuario(id) ON DELETE RESTRICT,
+                terminal_id INTEGER NOT NULL REFERENCES terminal(id) ON DELETE RESTRICT,
+                turno_id INTEGER NOT NULL REFERENCES turno(id) ON DELETE RESTRICT,
+                inicio TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                fin TIMESTAMP
+            );
+            """)
     _TABLAS_ASEGURADAS.add(using)
 
 
