@@ -1937,12 +1937,18 @@ class KDSCocinaTests(TestCase):
             estado_item=DetallePedido.ESTADO_ITEM_PENDIENTE,
         )
 
-        # 1. Iniciar ceviche -> ítem COCINANDO, pedido pasa a COCINANDO
-        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_COCINANDO)
+        # 1. Iniciar ceviche -> ítem EN_PREPARACION (contrato Java/Kotlin), pedido pasa a COCINANDO
+        avanzar_estado_item(d_ceviche.id, DetallePedido.ESTADO_ITEM_EN_PREPARACION)
         d_ceviche.refresh_from_db()
         ped.refresh_from_db()
-        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_COCINANDO)
+        self.assertEqual(d_ceviche.estado_item, DetallePedido.ESTADO_ITEM_EN_PREPARACION)
         self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+        # Rechazar estados fuera del conjunto canónico (COCINANDO / ANULADO en ítem)
+        with self.assertRaises(ValidationError):
+            avanzar_estado_item(d_chicha.id, "COCINANDO")
+        with self.assertRaises(ValidationError):
+            avanzar_estado_item(d_chicha.id, "ANULADO")
 
         # 2. Ceviche LISTO pero Chicha sigue PENDIENTE:
         # Pedido sigue en COCINANDO (NO LISTO todavía)
@@ -2029,11 +2035,11 @@ class KDSCocinaTests(TestCase):
         # 1. POST HTML
         resp_html = self.client.post(
             f"/cocina/items/{det.id}/avanzar/",
-            {"nuevo_estado": DetallePedido.ESTADO_ITEM_COCINANDO},
+            {"nuevo_estado": DetallePedido.ESTADO_ITEM_EN_PREPARACION},
         )
         self.assertEqual(resp_html.status_code, 302)
         det.refresh_from_db()
-        self.assertEqual(det.estado_item, DetallePedido.ESTADO_ITEM_COCINANDO)
+        self.assertEqual(det.estado_item, DetallePedido.ESTADO_ITEM_EN_PREPARACION)
 
         # 2. POST AJAX
         resp_ajax = self.client.post(
@@ -2095,10 +2101,10 @@ class KDSCocinaTests(TestCase):
         with self.assertRaises(TypeError):
             descontar_stock_pedido(ped)
 
-        # 1. Al pasar a COCINANDO en KDS, se descuenta el stock y se registra el autor
+        # 1. Al pasar a EN_PREPARACION en KDS, se descuenta el stock y se registra el autor
         avanzar_estado_item(
             det_ceviche.id,
-            DetallePedido.ESTADO_ITEM_COCINANDO,
+            DetallePedido.ESTADO_ITEM_EN_PREPARACION,
             usuario_id=1,
             motivo="Inicio preparación ceviche",
         )
@@ -2585,3 +2591,62 @@ class TurnosYTerminalesTests(TestCase):
         self.assertIn("DROP TABLE IF EXISTS turno;", v5_rb)
         self.assertIn("TERM-01", doc_md)
         self.assertIn("TERM-02", doc_md)
+
+    def test_acceso_admin_panel_sin_superuser_y_coherencia_estado_item(self):
+        """PRB-86: ADMIN operativo no ve /admin/; comanda COCINANDO usa EN_PREPARACION en ítem."""
+        User = get_user_model()
+        op_admin = User.objects.create_user(
+            username="admin_op_sidebar",
+            password="AdminOp!2026",
+            is_staff=True,
+            is_superuser=False,
+        )
+        self.client.force_login(op_admin)
+        resp_op = self.client.get("/")
+        self.assertEqual(resp_op.status_code, 200)
+        self.assertNotContains(resp_op, 'href="/admin/"')
+
+        self.client.force_login(self.staff_user)
+        resp_sup = self.client.get("/")
+        self.assertEqual(resp_sup.status_code, 200)
+        self.assertContains(resp_sup, 'href="/admin/"')
+
+        # Coherencia DDL V4 y schema.sql (PRB-86 / PRB-87)
+        base = settings.BASE_DIR
+        v4_sql = (base / "db" / "migrations" / "V4__kds_estado_item.sql").read_text(
+            encoding="utf-8"
+        )
+        schema_sql = (base / "db" / "schema.sql").read_text(encoding="utf-8")
+        esperado = "CHECK (estado_item IN ('PENDIENTE', 'EN_PREPARACION', 'LISTO', 'SERVIDO'))"
+        self.assertIn(esperado, v4_sql)
+        self.assertIn(esperado, schema_sql)
+        self.assertEqual(
+            [c[0] for c in DetallePedido.ESTADOS_ITEM_CHOICES],
+            ["PENDIENTE", "EN_PREPARACION", "LISTO", "SERVIDO"],
+        )
+
+        # Al avanzar comanda completa a COCINANDO, el detalle guarda EN_PREPARACION
+        cat = Categoria.objects.create(nombre="Ceviches Test PRB86")
+        prod = Producto.objects.create(
+            nombre="Ceviche PRB86",
+            precio=Decimal("45.00"),
+            categoria=cat,
+            disponible=True,
+        )
+        ped = Pedido.objects.create(
+            mozo_id=self.mozo.id,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("45.00"),
+        )
+        det = DetallePedido.objects.create(
+            pedido=ped,
+            producto=prod,
+            precio_unitario=Decimal("45.00"),
+            cantidad=1,
+            subtotal=Decimal("45.00"),
+        )
+        avanzar_estado_comanda(ped.id, Pedido.ESTADO_COCINANDO)
+        ped.refresh_from_db()
+        det.refresh_from_db()
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+        self.assertEqual(det.estado_item, DetallePedido.ESTADO_ITEM_EN_PREPARACION)

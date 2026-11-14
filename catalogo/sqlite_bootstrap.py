@@ -278,7 +278,8 @@ def asegurar_tablas_sqlite(using="default", **kwargs):
                 cantidad INTEGER NOT NULL CHECK (cantidad >= 1),
                 notas VARCHAR(255),
                 subtotal NUMERIC(10, 2) NOT NULL CHECK (subtotal >= 0),
-                estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+                estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+                    CHECK (estado_item IN ('PENDIENTE', 'EN_PREPARACION', 'LISTO', 'SERVIDO')),
                 estacion VARCHAR(30) DEFAULT 'COCINA_CALIENTE',
                 anulado_motivo VARCHAR(255)
             );

@@ -144,7 +144,7 @@
                 <span class="badge {{ det.producto.estacion|lower }}" style="font-size:10px;padding:2px 6px;">
                   {{ det.estacion_display }}
                 </span>
-                <span class="badge {% if det.estado_item == 'PENDIENTE' %}badge-warning{% elif det.estado_item == 'COCINANDO' or det.estado_item == 'EN_PREPARACION' %}badge-primary{% elif det.estado_item == 'LISTO' %}badge-success{% elif det.estado_item == 'SERVIDO' %}badge-outline{% else %}badge-danger{% endif %}" style="font-size:10px;padding:2px 6px;">
+                <span class="badge {% if det.estado_item == 'PENDIENTE' %}badge-warning{% elif det.estado_item == 'EN_PREPARACION' %}badge-primary{% elif det.estado_item == 'LISTO' %}badge-success{% elif det.estado_item == 'SERVIDO' %}badge-outline{% else %}badge-danger{% endif %}" style="font-size:10px;padding:2px 6px;">
                   {{ det.get_estado_item_display }}
                 </span>
                 {% if det.proxima_accion %}

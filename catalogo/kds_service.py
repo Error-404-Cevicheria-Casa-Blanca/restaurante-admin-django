@@ -8,7 +8,8 @@ Alcance P-10 (PLAN-PRODUCCION-POS.md §5.1, §8.4, ADR-01):
     - ALERTA (Ámbar): 10 a 20 minutos
     - CRITICO (Rojo): > 20 minutos
 - Avance transaccional de comanda y por ítem individual (PRB-86):
-  PENDIENTE -> COCINANDO -> LISTO -> SERVIDO.
+  Comanda: PENDIENTE -> COCINANDO -> LISTO -> SERVIDO.
+  Ítem: PENDIENTE -> EN_PREPARACION -> LISTO -> SERVIDO (CONTRATO-API-V2 / EstadoItem).
 - Aislamiento por estación: marcar 'Listo' en barra fría no marca platos de cocina caliente.
 - Auditoría inmutable de eventos en la tabla compartida 'evento_pedido'.
 """
@@ -67,26 +68,23 @@ TRANSICIONES_COCINA = {
 
 TRANSICIONES_ITEM = {
     DetallePedido.ESTADO_ITEM_PENDIENTE: [
-        DetallePedido.ESTADO_ITEM_COCINANDO,
         DetallePedido.ESTADO_ITEM_EN_PREPARACION,
         DetallePedido.ESTADO_ITEM_LISTO,
-        DetallePedido.ESTADO_ITEM_ANULADO,
-    ],
-    DetallePedido.ESTADO_ITEM_COCINANDO: [
-        DetallePedido.ESTADO_ITEM_LISTO,
-        DetallePedido.ESTADO_ITEM_ANULADO,
     ],
     DetallePedido.ESTADO_ITEM_EN_PREPARACION: [
         DetallePedido.ESTADO_ITEM_LISTO,
-        DetallePedido.ESTADO_ITEM_ANULADO,
     ],
     DetallePedido.ESTADO_ITEM_LISTO: [
         DetallePedido.ESTADO_ITEM_SERVIDO,
-        DetallePedido.ESTADO_ITEM_ANULADO,
     ],
-    DetallePedido.ESTADO_ITEM_SERVIDO: [
-        DetallePedido.ESTADO_ITEM_ANULADO,
-    ],
+    DetallePedido.ESTADO_ITEM_SERVIDO: [],
+}
+
+MAPA_PEDIDO_A_ESTADO_ITEM = {
+    Pedido.ESTADO_PENDIENTE: DetallePedido.ESTADO_ITEM_PENDIENTE,
+    Pedido.ESTADO_COCINANDO: DetallePedido.ESTADO_ITEM_EN_PREPARACION,
+    Pedido.ESTADO_LISTO: DetallePedido.ESTADO_ITEM_LISTO,
+    Pedido.ESTADO_SERVIDO: DetallePedido.ESTADO_ITEM_SERVIDO,
 }
 
 
@@ -113,31 +111,26 @@ def recalcular_estado_pedido(pedido):
     if not detalles:
         return pedido.estado
 
-    activos = [d for d in detalles if d.estado_item != DetallePedido.ESTADO_ITEM_ANULADO]
-    if not activos:
-        nuevo_estado = Pedido.ESTADO_ANULADO
+    estados_activos = set(d.estado_item for d in detalles)
+    if all(e == DetallePedido.ESTADO_ITEM_SERVIDO for e in estados_activos):
+        nuevo_estado = Pedido.ESTADO_SERVIDO
+    elif all(
+        e in (DetallePedido.ESTADO_ITEM_LISTO, DetallePedido.ESTADO_ITEM_SERVIDO)
+        for e in estados_activos
+    ):
+        nuevo_estado = Pedido.ESTADO_LISTO
+    elif any(
+        e
+        in (
+            DetallePedido.ESTADO_ITEM_EN_PREPARACION,
+            DetallePedido.ESTADO_ITEM_LISTO,
+            DetallePedido.ESTADO_ITEM_SERVIDO,
+        )
+        for e in estados_activos
+    ):
+        nuevo_estado = Pedido.ESTADO_COCINANDO
     else:
-        estados_activos = set(d.estado_item for d in activos)
-        if all(e == DetallePedido.ESTADO_ITEM_SERVIDO for e in estados_activos):
-            nuevo_estado = Pedido.ESTADO_SERVIDO
-        elif all(
-            e in (DetallePedido.ESTADO_ITEM_LISTO, DetallePedido.ESTADO_ITEM_SERVIDO)
-            for e in estados_activos
-        ):
-            nuevo_estado = Pedido.ESTADO_LISTO
-        elif any(
-            e
-            in (
-                DetallePedido.ESTADO_ITEM_COCINANDO,
-                DetallePedido.ESTADO_ITEM_EN_PREPARACION,
-                DetallePedido.ESTADO_ITEM_LISTO,
-                DetallePedido.ESTADO_ITEM_SERVIDO,
-            )
-            for e in estados_activos
-        ):
-            nuevo_estado = Pedido.ESTADO_COCINANDO
-        else:
-            nuevo_estado = Pedido.ESTADO_PENDIENTE
+        nuevo_estado = Pedido.ESTADO_PENDIENTE
 
     if pedido.estado != nuevo_estado:
         pedido.estado = nuevo_estado
@@ -150,8 +143,6 @@ def recalcular_estado_pedido(pedido):
 def avanzar_estado_item(detalle_id, nuevo_estado, usuario_id=None, motivo=""):
     """Avanza atómicamente el estado de un plato/ítem individual de la comanda (PRB-57, PRB-86)."""
     nuevo_estado = (nuevo_estado or "").strip().upper()
-    if nuevo_estado == "EN_PREPARACION":
-        nuevo_estado = DetallePedido.ESTADO_ITEM_COCINANDO
 
     with transaction.atomic():
         detalle = (
@@ -169,11 +160,7 @@ def avanzar_estado_item(detalle_id, nuevo_estado, usuario_id=None, motivo=""):
             )
 
         detalle.estado_item = nuevo_estado
-        update_fields = ["estado_item"]
-        if nuevo_estado == DetallePedido.ESTADO_ITEM_ANULADO and motivo:
-            detalle.anulado_motivo = motivo[:255]
-            update_fields.append("anulado_motivo")
-        detalle.save(update_fields=update_fields)
+        detalle.save(update_fields=["estado_item"])
 
         usuario_valido_id = _validar_fk_usuario_id(usuario_id)
 
@@ -190,9 +177,9 @@ def avanzar_estado_item(detalle_id, nuevo_estado, usuario_id=None, motivo=""):
 
         recalcular_estado_pedido(pedido)
 
-        # Descuento de stock automático al pasar a COCINANDO o LISTO
+        # Descuento de stock automático al pasar a EN_PREPARACION o LISTO
         if nuevo_estado in (
-            DetallePedido.ESTADO_ITEM_COCINANDO,
+            DetallePedido.ESTADO_ITEM_EN_PREPARACION,
             DetallePedido.ESTADO_ITEM_LISTO,
         ):
             try:
@@ -239,6 +226,8 @@ def avanzar_estado_comanda(
         estado_actual = pedido.estado
         usuario_valido_id = _validar_fk_usuario_id(usuario_id)
 
+        estado_item_destino = MAPA_PEDIDO_A_ESTADO_ITEM.get(nuevo_estado)
+
         # Si se especifica estación, avanzar solo los ítems de esa estación
         if estacion:
             estacion_cod = estacion.strip().upper()
@@ -248,8 +237,8 @@ def avanzar_estado_comanda(
             afectados = 0
             for d in detalles_qs:
                 if (d.estacion_item or d.producto.estacion) == estacion_cod:
-                    if d.estado_item != DetallePedido.ESTADO_ITEM_ANULADO:
-                        d.estado_item = nuevo_estado
+                    if estado_item_destino:
+                        d.estado_item = estado_item_destino
                         d.save(update_fields=["estado_item"])
                         afectados += 1
 
@@ -274,9 +263,9 @@ def avanzar_estado_comanda(
                     f"Transición no permitida: de '{estado_actual}' a '{nuevo_estado}'."
                 )
 
-            for d in pedido.detalles.select_for_update():
-                if d.estado_item != DetallePedido.ESTADO_ITEM_ANULADO:
-                    d.estado_item = nuevo_estado
+            if estado_item_destino:
+                for d in pedido.detalles.select_for_update():
+                    d.estado_item = estado_item_destino
                     d.save(update_fields=["estado_item"])
 
             pedido.estado = nuevo_estado
@@ -383,14 +372,11 @@ def obtener_comandas_kds(estacion=None, estado_filtro="activos"):
             prox_item = None
             if st == DetallePedido.ESTADO_ITEM_PENDIENTE:
                 prox_item = {
-                    "target_estado": DetallePedido.ESTADO_ITEM_COCINANDO,
+                    "target_estado": DetallePedido.ESTADO_ITEM_EN_PREPARACION,
                     "label": "Preparar",
                     "btn_class": "btn-item-iniciar",
                 }
-            elif st in (
-                DetallePedido.ESTADO_ITEM_COCINANDO,
-                DetallePedido.ESTADO_ITEM_EN_PREPARACION,
-            ):
+            elif st == DetallePedido.ESTADO_ITEM_EN_PREPARACION:
                 prox_item = {
                     "target_estado": DetallePedido.ESTADO_ITEM_LISTO,
                     "label": "Listo",
@@ -430,10 +416,7 @@ def obtener_comandas_kds(estacion=None, estado_filtro="activos"):
                     "label": "Iniciar Estación",
                     "btn_class": "btn-kds-iniciar",
                 }
-            elif (
-                DetallePedido.ESTADO_ITEM_COCINANDO in estados_estacion
-                or DetallePedido.ESTADO_ITEM_EN_PREPARACION in estados_estacion
-            ):
+            elif DetallePedido.ESTADO_ITEM_EN_PREPARACION in estados_estacion:
                 proxima_accion = {
                     "target_estado": Pedido.ESTADO_LISTO,
                     "label": "Marcar Estación Lista",

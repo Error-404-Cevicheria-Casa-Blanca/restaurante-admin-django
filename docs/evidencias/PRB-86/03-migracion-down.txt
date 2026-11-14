@@ -1,0 +1,30 @@
+﻿BEGIN
+DROP INDEX
+DO
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+COMMIT
+                                        Tabla �public.detalle_pedido�
+      Columna       |          Tipo          | Ordenamiento | Nulable  |                 Por omisi                  
+--------------------+------------------------+--------------+----------+--------------------------------------------
+ id                 | integer                |              | not null | nextval('detalle_pedido_id_seq'::regclass)
+ pedido_id          | integer                |              | not null | 
+ producto_id        | integer                |              | not null | 
+ precio_unitario    | numeric(10,2)          |              | not null | 
+ cantidad           | integer                |              | not null | 
+ notas              | character varying(255) |              |          | 
+ modificadores_json | text                   |              |          | 
+ subtotal           | numeric(10,2)          |              | not null | 
+�ndices:
+    "detalle_pedido_pkey" PRIMARY KEY, btree (id)
+    "idx_fk_detalle_pedido" btree (pedido_id)
+    "idx_fk_detalle_producto" btree (producto_id)
+Restricciones CHECK:
+    "detalle_pedido_cantidad_check" CHECK (cantidad >= 1)
+    "detalle_pedido_precio_unitario_check" CHECK (precio_unitario > 0::numeric)
+    "detalle_pedido_subtotal_check" CHECK (subtotal >= 0::numeric)
+Restricciones de llave for�nea:
+    "detalle_pedido_pedido_id_fkey" FOREIGN KEY (pedido_id) REFERENCES pedido(id) ON DELETE CASCADE
+    "detalle_pedido_producto_id_fkey" FOREIGN KEY (producto_id) REFERENCES producto(id) ON DELETE RESTRICT
+

@@ -1,5 +1,10 @@
 -- =============================================================================
 -- ROLLBACK MIGRACIÓN DE PRODUCCIÓN V4
+-- ADVERTENCIA: Esta reversión elimina TODO el bloque V4 en detalle_pedido:
+--   - estado_item (PRB-86)
+--   - estacion (PRB-57)
+--   - anulado_motivo (PRB-77)
+-- Ejecutar únicamente si se requiere revertir el bloque completo V4.
 -- =============================================================================
 
 BEGIN;

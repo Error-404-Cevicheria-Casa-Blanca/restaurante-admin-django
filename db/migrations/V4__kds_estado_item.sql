@@ -22,14 +22,14 @@ ALTER TABLE detalle_pedido
 ALTER TABLE detalle_pedido
     ADD COLUMN IF NOT EXISTS anulado_motivo VARCHAR(255);
 
--- 4. Constraint de validación de estados por plato
+-- 4. Constraint de validación de estados por plato (alineado a EstadoItem.java y CONTRATO-API-V2)
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'chk_detalle_pedido_estado_item'
     ) THEN
         ALTER TABLE detalle_pedido ADD CONSTRAINT chk_detalle_pedido_estado_item
-            CHECK (estado_item IN ('PENDIENTE', 'COCINANDO', 'EN_PREPARACION', 'LISTO', 'SERVIDO', 'ANULADO'));
+            CHECK (estado_item IN ('PENDIENTE', 'EN_PREPARACION', 'LISTO', 'SERVIDO'));
     END IF;
 END $$;
 

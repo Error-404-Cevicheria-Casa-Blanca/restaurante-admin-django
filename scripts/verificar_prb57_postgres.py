@@ -160,7 +160,7 @@ def main():
         # 5. Barra Fría inicia su plato (verifica además descuento de stock D2)
         avanzar_estado_item(
             d1.id,
-            DetallePedido.ESTADO_ITEM_COCINANDO,
+            DetallePedido.ESTADO_ITEM_EN_PREPARACION,
             usuario_id=mozo.id,
             motivo="Cocinero inicia ceviche",
         )
@@ -175,7 +175,7 @@ def main():
             f"[OK] Descuento de stock KDS (D2): {len(movs)} movimiento(s) en "
             f"'movimiento_stock' (registrado_por='{movs[0].registrado_por if movs else ''}')"
         )
-        assert d1.estado_item == DetallePedido.ESTADO_ITEM_COCINANDO
+        assert d1.estado_item == DetallePedido.ESTADO_ITEM_EN_PREPARACION
         assert pedido.estado == Pedido.ESTADO_COCINANDO
         assert len(movs) >= 1, "No se registró el descuento de stock en movimiento_stock"
 

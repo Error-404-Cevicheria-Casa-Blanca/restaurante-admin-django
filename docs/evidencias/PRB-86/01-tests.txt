@@ -1,0 +1,16 @@
+Found 78 test(s).
+Creating test database for alias 'default'...
+System check identified no issues (0 silenced).
+......................Seeds PRB-52 aplicados: roles +2, usuarios +4/~1, platos +15/~0, mesas +13/~0.
+Auditoría PRB-52 OK: 4 roles, 5 usuarios con PIN BCrypt, 15/15 platos oficiales con foto y 13/13 mesas verificadas.
+Seeds PRB-52 aplicados: roles +0, usuarios +0/~0, platos +0/~0, mesas +0/~0.
+Auditoría PRB-52 OK: 4 roles, 5 usuarios con PIN BCrypt, 15/15 platos oficiales con foto y 13/13 mesas verificadas.
+Auditoría PRB-52 OK: 4 roles, 5 usuarios con PIN BCrypt, 15/15 platos oficiales con foto y 13/13 mesas verificadas.
+...............................................Seeds PRB-52 aplicados: roles +3, usuarios +5/~0, platos +15/~0, mesas +13/~0.
+Auditoría PRB-52 OK: 4 roles, 6 usuarios con PIN BCrypt, 15/15 platos oficiales con foto y 13/13 mesas verificadas.
+.........
+----------------------------------------------------------------------
+Ran 78 tests in 59.245s
+
+OK
+Destroying test database for alias 'default'...

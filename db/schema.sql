@@ -67,7 +67,7 @@ CREATE TABLE detalle_pedido (
     modificadores_json TEXT,
     subtotal NUMERIC(10,2) NOT NULL CHECK (subtotal >= 0),
     estado_item VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
-        CHECK (estado_item IN ('PENDIENTE','COCINANDO','EN_PREPARACION','LISTO','SERVIDO','ANULADO')),
+        CHECK (estado_item IN ('PENDIENTE', 'EN_PREPARACION', 'LISTO', 'SERVIDO')),
     estacion VARCHAR(30) NOT NULL DEFAULT 'COCINA_CALIENTE',
     anulado_motivo VARCHAR(255)
 );

@@ -518,19 +518,15 @@ class DetallePedido(models.Model):
     """
 
     ESTADO_ITEM_PENDIENTE = "PENDIENTE"
-    ESTADO_ITEM_COCINANDO = "COCINANDO"
     ESTADO_ITEM_EN_PREPARACION = "EN_PREPARACION"
     ESTADO_ITEM_LISTO = "LISTO"
     ESTADO_ITEM_SERVIDO = "SERVIDO"
-    ESTADO_ITEM_ANULADO = "ANULADO"
 
     ESTADOS_ITEM_CHOICES = [
         (ESTADO_ITEM_PENDIENTE, "Pendiente"),
-        (ESTADO_ITEM_COCINANDO, "En Cocina"),
         (ESTADO_ITEM_EN_PREPARACION, "En Preparación"),
         (ESTADO_ITEM_LISTO, "Listo"),
         (ESTADO_ITEM_SERVIDO, "Servido"),
-        (ESTADO_ITEM_ANULADO, "Anulado"),
     ]
 
     pedido = models.ForeignKey(
