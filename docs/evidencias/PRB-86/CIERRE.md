@@ -1,7 +1,7 @@
 # CIERRE — PRB-86: Columna `estado_item` en `detalle_pedido` y coherencia KDS/Java
 
 **Fecha de verificación:** 2026-11-14  
-**Rama Git:** `fix/PRB-86-estado-item-y-evidencias` (hacia `develop`)  
+**Rama Git:** `fix/PRB-86-estado-item` (hacia `develop`)  
 **Tareas relacionadas:** `PRB-86`, `PRB-57` (KDS Cocina), `PRB-77` (Anulación de ítems), `PRB-87` (`EstadoItem.java` en Java)
 
 ---
