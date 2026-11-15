@@ -127,6 +127,7 @@
           <span>Personal y PIN</span>
         </a>
 
+        {% if request.user.is_superuser %}
         <a href="{% url 'admin:index' %}" class="nav-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
@@ -134,6 +135,7 @@
           </svg>
           <span>Administración</span>
         </a>
+        {% endif %}
       </nav>
 
       <div class="sidebar-footer">

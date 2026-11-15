@@ -58,10 +58,20 @@ $env:DJANGO_DEBUG = "1"
 - **Sitio administrativo técnico Django:** `http://127.0.0.1:8000/admin/`
 
 ```powershell
+# Opción A: script reproducible (configura DJANGO_SECRET_KEY de sesión si no existe)
+.\scripts\test.ps1
+
+# Opción B: comando explícito con manage.py test (requiere DJANGO_SECRET_KEY definida)
+$env:DJANGO_SECRET_KEY = "clave-temporal-solo-para-tests-locales"
+.\.venv\Scripts\python.exe manage.py test
+
+# Otras verificaciones (pytest ya inyecta clave efímera vía pytest_entorno.py)
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m flake8
 .\.venv\Scripts\python.exe manage.py check
 ```
+
+> **Nota sobre `manage.py test`:** Por seguridad (`config/settings.py`), ejecutar `python manage.py test` sin `DJANGO_SECRET_KEY` (ni `DJANGO_DEBUG=1`) falla con `KeyError: 'DJANGO_SECRET_KEY'`. Usa `.\scripts\test.ps1` o define `$env:DJANGO_SECRET_KEY` antes de correr la suite. Si el entorno local usa `venv\` en lugar de `.venv\`, `.\scripts\test.ps1` detecta automáticamente el entorno con Django instalado.
 
 ## Equipo
 
