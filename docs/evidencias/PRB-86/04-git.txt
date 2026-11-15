@@ -1,0 +1,18 @@
+﻿209c951 fix(PRB-86): alinear 6 estados con Java PR #12 y agregar evidencias
+a9c3267 Merge pull request #12 from Error-404-Cevicheria-Casa-Blanca/feature/PRB-84-turnos-terminales
+7d99baa fix(PRB-96): sanitizar PINs en tests, rotar hashes BCrypt cost 10 y refinar panel admin
+eb54935 feat(PRB-84): agregar tablas y modelos Turno, Terminal y SesionMozo con migracion V5 y seeds
+4927963 feat(PRB-58): implementar spooler centralizado de impresion termica 80 mm con cola y reintentos (#11)
+fix/PRB-86-estado-item
+209c951 fix(PRB-86): alinear 6 estados con Java PR #12 y agregar evidencias
+ README.md                                      | 10 ++++
+ catalogo/sqlite_bootstrap.py                   | 12 +++-
+ catalogo/templates/catalogo/base.html          |  2 +
+ catalogo/tests.py                              | 79 +++++++++++++++++++++++++
+ db/migrations/V4__kds_estado_item_rollback.sql |  5 ++
+ docs/evidencias/PRB-86/01-tests.txt            | 16 ++++++
+ docs/evidencias/PRB-86/02-migracion-up.txt     | 35 +++++++++++
+ docs/evidencias/PRB-86/03-migracion-down.txt   | 30 ++++++++++
+ docs/evidencias/PRB-86/CIERRE.md               | 48 ++++++++++++++++
+ scripts/test.ps1                               | 80 ++++++++++++++++++++++++++
+ 10 files changed, 316 insertions(+), 1 deletion(-)

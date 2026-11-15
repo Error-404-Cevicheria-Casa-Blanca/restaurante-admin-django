@@ -2585,3 +2585,82 @@ class TurnosYTerminalesTests(TestCase):
         self.assertIn("DROP TABLE IF EXISTS turno;", v5_rb)
         self.assertIn("TERM-01", doc_md)
         self.assertIn("TERM-02", doc_md)
+
+    def test_acceso_admin_panel_sin_superuser_y_coherencia_6_estados(self):
+        """PRB-86: ADMIN operativo no ve /admin/; BD, modelo y KDS alinean 6 estados con Java."""
+        User = get_user_model()
+        op_admin = User.objects.create_user(
+            username="admin_op_sidebar",
+            password="AdminOp!2026",
+            is_staff=True,
+            is_superuser=False,
+        )
+        self.client.force_login(op_admin)
+        resp_op = self.client.get("/")
+        self.assertEqual(resp_op.status_code, 200)
+        self.assertNotContains(resp_op, 'href="/admin/"')
+
+        self.client.force_login(self.staff_user)
+        resp_sup = self.client.get("/")
+        self.assertEqual(resp_sup.status_code, 200)
+        self.assertContains(resp_sup, 'href="/admin/"')
+
+        esperados = [
+            "PENDIENTE",
+            "COCINANDO",
+            "EN_PREPARACION",
+            "LISTO",
+            "SERVIDO",
+            "ANULADO",
+        ]
+        self.assertEqual([c[0] for c in DetallePedido.ESTADOS_ITEM_CHOICES], esperados)
+
+        base = settings.BASE_DIR
+        v4_sql = (base / "db" / "migrations" / "V4__kds_estado_item.sql").read_text(
+            encoding="utf-8"
+        )
+        schema_sql = (base / "db" / "schema.sql").read_text(encoding="utf-8")
+        for est in esperados:
+            self.assertIn(f"'{est}'", v4_sql)
+            self.assertIn(f"'{est}'", schema_sql)
+
+        # COCINANDO y ANULADO funcionan por ítem y actualizan anulado_motivo
+        cat = Categoria.objects.create(nombre="Ceviches Test PRB86")
+        prod = Producto.objects.create(
+            nombre="Ceviche PRB86",
+            precio=Decimal("45.00"),
+            categoria=cat,
+            disponible=True,
+        )
+        ped = Pedido.objects.create(
+            mozo_id=self.mozo.id,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("90.00"),
+        )
+        det1 = DetallePedido.objects.create(
+            pedido=ped,
+            producto=prod,
+            precio_unitario=Decimal("45.00"),
+            cantidad=1,
+            subtotal=Decimal("45.00"),
+        )
+        det2 = DetallePedido.objects.create(
+            pedido=ped,
+            producto=prod,
+            precio_unitario=Decimal("45.00"),
+            cantidad=1,
+            subtotal=Decimal("45.00"),
+        )
+        avanzar_estado_item(det1.id, DetallePedido.ESTADO_ITEM_COCINANDO)
+        avanzar_estado_item(
+            det2.id,
+            DetallePedido.ESTADO_ITEM_ANULADO,
+            motivo="Cliente cambió de plato",
+        )
+        det1.refresh_from_db()
+        det2.refresh_from_db()
+        ped.refresh_from_db()
+        self.assertEqual(det1.estado_item, DetallePedido.ESTADO_ITEM_COCINANDO)
+        self.assertEqual(det2.estado_item, DetallePedido.ESTADO_ITEM_ANULADO)
+        self.assertEqual(det2.anulado_motivo, "Cliente cambió de plato")
+        self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
