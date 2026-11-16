@@ -6,7 +6,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Panel de Gestión{% endblock %} · La Casa Blanca</title>
   <link rel="icon" type="image/png" href="{% static 'catalogo/img/logo.png' %}">
-  <link rel="stylesheet" href="{% static 'catalogo/css/panel.css' %}?v=20261111_3">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("casablanca_theme");
+        if (t === "dark" || t === "light") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="{% static 'catalogo/css/panel.css' %}?v=20261116_2">
 </head>
 <body>
   <div class="app-shell">
@@ -138,6 +148,25 @@
         {% endif %}
       </nav>
 
+      <div class="sidebar-theme-box" role="group" aria-label="Apariencia del panel">
+        <div class="nav-section-label" style="padding: 0 2px 8px;">Apariencia</div>
+        <div class="theme-switch-group">
+          <button type="button" class="theme-switch-btn is-active" data-theme-option="light" aria-pressed="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+            </svg>
+            <span>Modo claro</span>
+          </button>
+          <button type="button" class="theme-switch-btn" data-theme-option="dark" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+            </svg>
+            <span>Modo oscuro</span>
+          </button>
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <div class="user-pill">
           <div class="user-meta">
@@ -173,6 +202,6 @@
       {% block content %}{% endblock %}
     </main>
   </div>
-  <script src="{% static 'catalogo/js/panel.js' %}?v=20261111_3"></script>
+  <script src="{% static 'catalogo/js/panel.js' %}?v=20261116_2"></script>
 </body>
 </html>

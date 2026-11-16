@@ -7,39 +7,13 @@
   <div>
     <h1 class="page-title">Dashboard</h1>
     <p class="page-subtitle">
-      Catálogo de platos marinos, estructura de precios y disponibilidad según pesca del día
+      Monitoreo en vivo de salón y cocina, estructura de carta y pesca del día
     </p>
   </div>
 
   <div class="header-controls">
-    <div class="pill-group" role="group" aria-label="Filtro de disponibilidad">
-      <a href="?estado=todos{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
-         class="pill-filter {% if estado_filtro == 'todos' %}is-active{% endif %}">
-        Toda la carta
-      </a>
-      <a href="?estado=disponibles{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
-         class="pill-filter {% if estado_filtro == 'disponibles' %}is-active{% endif %}">
-        Disponibles
-      </a>
-      <a href="?estado=agotados{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
-         class="pill-filter {% if estado_filtro == 'agotados' %}is-active{% endif %}">
-        Agotados
-      </a>
-    </div>
-
-    <form method="get" style="display:inline-flex;align-items:center;gap:6px;">
-      <input type="hidden" name="estado" value="{{ estado_filtro }}">
-      <select name="categoria" class="form-select" style="width:auto;padding:7px 12px;font-size:12.5px;">
-        <option value="">Todas las categorías</option>
-        {% for cat in categorias %}
-        <option value="{{ cat.id }}" {% if categoria_activa == cat.id %}selected{% endif %}>
-          {{ cat.nombre }}
-        </option>
-        {% endfor %}
-      </select>
-      <button type="submit" class="btn btn-outline">Aplicar</button>
-    </form>
-
+    <a href="{% url 'catalogo:kds_cocina' %}" class="btn btn-outline">KDS Cocina</a>
+    <a href="{% url 'catalogo:caja' %}" class="btn btn-outline">Caja y Arqueo</a>
     <button type="button" class="btn btn-primary" data-open-modal="modal-nuevo-plato">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
         <path d="M12 5v14M5 12h14"/>
@@ -212,10 +186,40 @@
   </div>
 </section>
 
-<div class="section-divider" style="margin:28px 0 20px;border-top:1px solid #e2e8f0;position:relative;text-align:center;">
-  <span style="background:var(--bg-canvas);padding:0 14px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;position:relative;top:-9px;">
+<div class="section-divider" style="margin:28px 0 16px;border-top:1px solid #cbd5e1;position:relative;text-align:center;">
+  <span style="background:var(--bg-canvas);padding:0 14px;color:var(--accent-teal);font-size:12px;text-transform:uppercase;letter-spacing:0.06em;font-weight:700;position:relative;top:-9px;">
     Métricas y Distribución de Carta (Catálogo)
   </span>
+</div>
+
+<div class="header-controls" style="justify-content:space-between;margin-bottom:14px;">
+  <div class="pill-group" role="group" aria-label="Filtro de disponibilidad">
+    <a href="?estado=todos{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
+       class="pill-filter {% if estado_filtro == 'todos' %}is-active{% endif %}">
+      Toda la carta
+    </a>
+    <a href="?estado=disponibles{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
+       class="pill-filter {% if estado_filtro == 'disponibles' %}is-active{% endif %}">
+      Disponibles
+    </a>
+    <a href="?estado=agotados{% if categoria_activa %}&categoria={{ categoria_activa }}{% endif %}"
+       class="pill-filter {% if estado_filtro == 'agotados' %}is-active{% endif %}">
+      Agotados
+    </a>
+  </div>
+
+  <form method="get" style="display:inline-flex;align-items:center;gap:6px;">
+    <input type="hidden" name="estado" value="{{ estado_filtro }}">
+    <select name="categoria" class="form-select" style="width:auto;padding:7px 12px;font-size:12.5px;">
+      <option value="">Todas las categorías</option>
+      {% for cat in categorias %}
+      <option value="{{ cat.id }}" {% if categoria_activa == cat.id %}selected{% endif %}>
+        {{ cat.nombre }}
+      </option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-outline">Aplicar</button>
+  </form>
 </div>
 
 <!-- Fila de 6 Tarjetas KPI (Alcance estricto PRB-19) -->
@@ -328,7 +332,7 @@
     </div>
     <div class="chart-legend">
       <span class="legend-item">
-        <span class="legend-swatch" style="background:#dfc05a;"></span> Platos registrados
+        <span class="legend-swatch" style="background:#1e40af;"></span> Platos registrados
       </span>
     </div>
     <div id="barras-platos-chart-container" class="chart-stage"></div>
@@ -343,7 +347,7 @@
     </div>
     <div class="chart-legend">
       <span class="legend-item">
-        <span class="legend-line" style="background:#0f4c5c;"></span> Precio promedio (S/)
+        <span class="legend-line" style="background:#06b6d4;"></span> Precio promedio (S/)
       </span>
     </div>
     <div id="precio-promedio-chart-container" class="chart-stage"></div>
@@ -389,7 +393,7 @@
           {% for cat in categorias %}
           <tr>
             <td>
-              <a href="{% url 'catalogo:platos_list' %}?categoria={{ cat.id }}" class="dish-name" style="color:#1d4ed8;">
+              <a href="{% url 'catalogo:platos_list' %}?categoria={{ cat.id }}" class="dish-name" style="color:var(--accent-blue);">
                 {{ cat.nombre }}
               </a>
             </td>

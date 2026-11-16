@@ -6,7 +6,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Iniciar Sesión · La Casa Blanca</title>
   <link rel="icon" type="image/png" href="{% static 'catalogo/img/logo.png' %}">
-  <link rel="stylesheet" href="{% static 'catalogo/css/panel.css' %}">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("casablanca_theme");
+        if (t === "dark" || t === "light") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="{% static 'catalogo/css/panel.css' %}?v=20261116_2">
 </head>
 <body>
   <div class="login-shell">
@@ -14,8 +24,8 @@
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:22px;">
         <img src="{% static 'catalogo/img/logo.png' %}" alt="Logo La Casa Blanca" class="login-logo-img">
         <div>
-          <h1 style="margin:0;font-size:19px;font-weight:700;color:#0f172a;">La Casa Blanca</h1>
-          <p style="margin:2px 0 0;font-size:12.5px;color:#64748b;">Panel administrativo de carta y pesca del día</p>
+          <h1 style="margin:0;font-size:19px;font-weight:700;color:var(--text-primary);">La Casa Blanca</h1>
+          <p style="margin:2px 0 0;font-size:12.5px;color:var(--text-muted);">Panel administrativo de carta y pesca del día</p>
         </div>
       </div>
 
