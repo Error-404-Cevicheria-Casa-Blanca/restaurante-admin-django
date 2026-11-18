@@ -18,7 +18,12 @@
     });
   }
 
-  const PALETA_DONUT = ["#3b82f6", "#eab308", "#0f4c5c", "#10b981", "#f97316", "#6366f1"];
+  const PALETA_DONUT = ["#06b6d4", "#1e40af", "#3b82f6", "#10b981", "#f59e0b", "#6366f1"];
+  let modoDonutActual = "categorias";
+
+  function esTemaOscuro() {
+    return document.documentElement.getAttribute("data-theme") === "dark";
+  }
 
   function obtenerTooltip() {
     let el = document.getElementById("chart-tooltip");
@@ -82,6 +87,29 @@
     svg.style.width = "100%";
     svg.style.height = "auto";
 
+    const dark = esTemaOscuro();
+    const gridStroke = dark ? "rgba(30, 64, 175, 0.32)" : "#eef2f7";
+    const axisFill = dark ? "#94a3b8" : "#64748b";
+
+    // Gradiente para barras en azul cobalto (#1e40af -> #06b6d4)
+    const defs = document.createElementNS(ns, "defs");
+    const gradBar = document.createElementNS(ns, "linearGradient");
+    gradBar.setAttribute("id", "grad-barras-cobalto");
+    gradBar.setAttribute("x1", "0");
+    gradBar.setAttribute("y1", "0");
+    gradBar.setAttribute("x2", "0");
+    gradBar.setAttribute("y2", "1");
+    const bStop1 = document.createElementNS(ns, "stop");
+    bStop1.setAttribute("offset", "0%");
+    bStop1.setAttribute("stop-color", dark ? "#3b82f6" : "#2563eb");
+    const bStop2 = document.createElementNS(ns, "stop");
+    bStop2.setAttribute("offset", "100%");
+    bStop2.setAttribute("stop-color", "#1e40af");
+    gradBar.appendChild(bStop1);
+    gradBar.appendChild(bStop2);
+    defs.appendChild(gradBar);
+    svg.appendChild(defs);
+
     // Líneas guía horizontales y etiquetas del eje Y (enteros)
     for (let i = 0; i <= pasos; i++) {
       const ratio = i / pasos;
@@ -93,7 +121,7 @@
       line.setAttribute("x2", W - padR);
       line.setAttribute("y1", y);
       line.setAttribute("y2", y);
-      line.setAttribute("stroke", "#eef2f7");
+      line.setAttribute("stroke", gridStroke);
       line.setAttribute("stroke-width", "1");
       svg.appendChild(line);
 
@@ -122,7 +150,7 @@
       rect.setAttribute("width", barW);
       rect.setAttribute("height", Math.max(hBarra, 3));
       rect.setAttribute("rx", "5");
-      rect.setAttribute("fill", "#dfc05a");
+      rect.setAttribute("fill", "url(#grad-barras-cobalto)");
       rect.style.cursor = "pointer";
       rect.style.transition = "opacity 0.15s ease";
 
@@ -148,7 +176,7 @@
         valTxt.setAttribute("x", cx);
         valTxt.setAttribute("y", yBarra - 6);
         valTxt.setAttribute("text-anchor", "middle");
-        valTxt.setAttribute("fill", "#786114");
+        valTxt.setAttribute("fill", dark ? "#ffffff" : "#1e40af");
         valTxt.setAttribute("font-size", "11");
         valTxt.setAttribute("font-weight", "600");
         valTxt.setAttribute("font-family", "inherit");
@@ -161,7 +189,7 @@
       label.setAttribute("x", cx);
       label.setAttribute("y", padT + plotH + 18);
       label.setAttribute("text-anchor", "middle");
-      label.setAttribute("fill", "#64748b");
+      label.setAttribute("fill", axisFill);
       label.setAttribute("font-size", "11");
       label.setAttribute("font-family", "inherit");
       const corto = d.nombre.length > 15 ? d.nombre.slice(0, 14) + "…" : d.nombre;
@@ -211,6 +239,11 @@
     svg.style.width = "100%";
     svg.style.height = "auto";
 
+    const dark = esTemaOscuro();
+    const gridStroke = dark ? "rgba(30, 64, 175, 0.32)" : "#eef2f7";
+    const axisFill = dark ? "#94a3b8" : "#64748b";
+    const strokeCyan = dark ? "#06b6d4" : "#0891b2";
+
     // Gradiente para sombra suave bajo la curva
     const defs = document.createElementNS(ns, "defs");
     const grad = document.createElementNS(ns, "linearGradient");
@@ -222,14 +255,14 @@
 
     const stop1 = document.createElementNS(ns, "stop");
     stop1.setAttribute("offset", "0%");
-    stop1.setAttribute("stop-color", "#0f4c5c");
-    stop1.setAttribute("stop-opacity", "0.20");
+    stop1.setAttribute("stop-color", "#06b6d4");
+    stop1.setAttribute("stop-opacity", dark ? "0.38" : "0.24");
     grad.appendChild(stop1);
 
     const stop2 = document.createElementNS(ns, "stop");
     stop2.setAttribute("offset", "100%");
-    stop2.setAttribute("stop-color", "#0f4c5c");
-    stop2.setAttribute("stop-opacity", "0.02");
+    stop2.setAttribute("stop-color", "#1e40af");
+    stop2.setAttribute("stop-opacity", dark ? "0.04" : "0.02");
     grad.appendChild(stop2);
 
     defs.appendChild(grad);
@@ -246,7 +279,7 @@
       line.setAttribute("x2", W - padR);
       line.setAttribute("y1", y);
       line.setAttribute("y2", y);
-      line.setAttribute("stroke", "#eef2f7");
+      line.setAttribute("stroke", gridStroke);
       line.setAttribute("stroke-width", "1");
       svg.appendChild(line);
 
@@ -285,7 +318,7 @@
       label.setAttribute("x", cx);
       label.setAttribute("y", padT + plotH + 18);
       label.setAttribute("text-anchor", "middle");
-      label.setAttribute("fill", "#64748b");
+      label.setAttribute("fill", axisFill);
       label.setAttribute("font-size", "11");
       label.setAttribute("font-family", "inherit");
       const corto = d.nombre.length > 15 ? d.nombre.slice(0, 14) + "…" : d.nombre;
@@ -315,7 +348,7 @@
       const linePath = document.createElementNS(ns, "path");
       linePath.setAttribute("d", curveD);
       linePath.setAttribute("fill", "none");
-      linePath.setAttribute("stroke", "#0f4c5c");
+      linePath.setAttribute("stroke", strokeCyan);
       linePath.setAttribute("stroke-width", "2.8");
       svg.appendChild(linePath);
 
@@ -325,8 +358,8 @@
         circle.setAttribute("cx", pt.x);
         circle.setAttribute("cy", pt.y);
         circle.setAttribute("r", "5");
-        circle.setAttribute("fill", "#ffffff");
-        circle.setAttribute("stroke", "#0f4c5c");
+        circle.setAttribute("fill", dark ? "#0f172a" : "#ffffff");
+        circle.setAttribute("stroke", strokeCyan);
         circle.setAttribute("stroke-width", "2.5");
         circle.style.cursor = "pointer";
 
@@ -345,7 +378,7 @@
           valTxt.setAttribute("x", pt.x);
           valTxt.setAttribute("y", pt.y - 9);
           valTxt.setAttribute("text-anchor", "middle");
-          valTxt.setAttribute("fill", "#0f4c5c");
+          valTxt.setAttribute("fill", dark ? "#ffffff" : "#0891b2");
           valTxt.setAttribute("font-size", "10.5");
           valTxt.setAttribute("font-weight", "600");
           valTxt.setAttribute("font-family", "inherit");
@@ -367,6 +400,7 @@
 
   /* --- Gráfico 2: Donut Interactivo (Disponibilidad / Categorías) --- */
   function renderDonut(modo) {
+    modoDonutActual = modo || "categorias";
     const contenedor = document.getElementById("donut-chart-container");
     const leyendaEl = document.getElementById("donut-legend");
     const dataScript = document.getElementById("chart-donut-data");
@@ -437,11 +471,12 @@
       acumulado += frac;
     });
 
+    const dark = esTemaOscuro();
     const txtValor = document.createElementNS(ns, "text");
     txtValor.setAttribute("x", cx);
     txtValor.setAttribute("y", cy - 2);
     txtValor.setAttribute("text-anchor", "middle");
-    txtValor.setAttribute("fill", "#0f172a");
+    txtValor.setAttribute("fill", dark ? "#ffffff" : "#0f172a");
     txtValor.setAttribute("font-size", "22");
     txtValor.setAttribute("font-weight", "700");
     txtValor.textContent = String(total);
@@ -451,7 +486,7 @@
     txtSub.setAttribute("x", cx);
     txtSub.setAttribute("y", cy + 16);
     txtSub.setAttribute("text-anchor", "middle");
-    txtSub.setAttribute("fill", "#64748b");
+    txtSub.setAttribute("fill", dark ? "#94a3b8" : "#64748b");
     txtSub.setAttribute("font-size", "11");
     txtSub.textContent = "platos";
     svg.appendChild(txtSub);
@@ -660,7 +695,41 @@
     setInterval(refrescarOperativo, 30000);
   }
 
+  /* --- Selector de Tema: Modo Claro / Modo Oscuro --- */
+  function inicializarSelectorTema() {
+    const botones = document.querySelectorAll("[data-theme-option]");
+    function aplicarTema(tema) {
+      const elegido = tema === "dark" ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", elegido);
+      try {
+        localStorage.setItem("casablanca_theme", elegido);
+      } catch (_) {}
+      botones.forEach((btn) => {
+        const activo = btn.getAttribute("data-theme-option") === elegido;
+        btn.classList.toggle("is-active", activo);
+        btn.setAttribute("aria-pressed", activo ? "true" : "false");
+      });
+    }
+
+    const actual =
+      document.documentElement.getAttribute("data-theme") === "dark"
+        ? "dark"
+        : "light";
+    aplicarTema(actual);
+
+    botones.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const elegido = btn.getAttribute("data-theme-option") || "light";
+        aplicarTema(elegido);
+        renderBarrasPlatos();
+        renderCurvaPrecios();
+        renderDonut(modoDonutActual);
+      });
+    });
+  }
+
   function initPanel() {
+    inicializarSelectorTema();
     renderBarrasPlatos();
     renderCurvaPrecios();
     renderDonut("categorias");
