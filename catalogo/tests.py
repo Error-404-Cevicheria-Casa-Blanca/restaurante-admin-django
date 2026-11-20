@@ -1,10 +1,14 @@
 """Pruebas del esqueleto PE-6 y del módulo de catálogo de platos PE-19."""
 
+import io
+import json
 import os
 import subprocess
 import sys
-from datetime import time
+import tempfile
+from datetime import datetime, time, timedelta, timezone as dt_timezone
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings
@@ -12,6 +16,7 @@ from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
@@ -2664,3 +2669,335 @@ class TurnosYTerminalesTests(TestCase):
         self.assertEqual(det2.estado_item, DetallePedido.ESTADO_ITEM_ANULADO)
         self.assertEqual(det2.anulado_motivo, "Cliente cambió de plato")
         self.assertEqual(ped.estado, Pedido.ESTADO_COCINANDO)
+
+
+class WorkerDespacharImpresionTests(TestCase):
+    """Pruebas del worker despachar_impresion (--once, --loop, --healthcheck) y PRB-107/108."""
+
+    @classmethod
+    def setUpClass(cls):
+        _crear_tablas_unmanaged_si_no_existen()
+        super().setUpClass()
+
+    def setUp(self):
+        limpiar_buffer_simulado()
+        self.cat_cev = Categoria.objects.create(nombre="Ceviches Worker")
+        self.cat_fon = Categoria.objects.create(nombre="Fondos Worker")
+        self.ceviche = Producto.objects.create(
+            nombre="Ceviche Norteño Worker",
+            precio=Decimal("48.00"),
+            categoria=self.cat_cev,
+            disponible=True,
+        )
+        self.jalea = Producto.objects.create(
+            nombre="Jalea Real Worker",
+            precio=Decimal("58.00"),
+            categoria=self.cat_fon,
+            disponible=True,
+        )
+        self.mesa5 = Mesa.objects.create(
+            numero=5, capacidad=6, estado="OCUPADA"
+        )
+        self.rol_mozo, _ = Rol.objects.get_or_create(nombre="MOZO")
+        self.mozo = Usuario.objects.create(
+            username="mozo_worker_01", rol=self.rol_mozo, pin_hash="x"
+        )
+        self.pedido = Pedido.objects.create(
+            mesa=self.mesa5,
+            mozo_id=self.mozo.id,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("106.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=self.pedido,
+            producto=self.ceviche,
+            cantidad=1,
+            notas="Ají suave",
+            precio_unitario=Decimal("48.00"),
+            subtotal=Decimal("48.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=self.pedido,
+            producto=self.jalea,
+            cantidad=1,
+            notas="",
+            precio_unitario=Decimal("58.00"),
+            subtotal=Decimal("58.00"),
+        )
+
+    def test_worker_once_procesa_comanda_y_precuenta_con_escpos(self):
+        """PRB-107: --once despacha COMANDA por estación y PRECUENTA con bytes ESC/POS."""
+        t_com = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            estacion=Producto.ESTACION_BARRA_FRIA,
+            payload="stub comanda java",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+        t_pre = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            estacion="CAJA",
+            payload="stub precuenta java",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+
+        out = io.StringIO()
+        call_command("despachar_impresion", "--once", "--modo", "DUMMY", stdout=out)
+
+        t_com.refresh_from_db()
+        t_pre.refresh_from_db()
+        self.assertEqual(t_com.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(t_com.intentos, 1)
+        self.assertIn("CEVICHE NORTEÑO WORKER", t_com.payload)
+        self.assertNotIn("JALEA REAL WORKER", t_com.payload)
+
+        self.assertEqual(t_pre.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(t_pre.intentos, 1)
+        self.assertIn("PRE-CUENTA DE CONSUMO", t_pre.payload)
+        self.assertIn("106.00", t_pre.payload)
+
+        buf = obtener_buffer_simulado()
+        self.assertEqual(len(buf), 2)
+        self.assertTrue(buf[0]["payload_bytes"].startswith(CMD_INIT))
+        self.assertTrue(buf[0]["payload_bytes"].endswith(CMD_FEED_CUT))
+        self.assertTrue(buf[1]["payload_bytes"].startswith(CMD_INIT))
+        self.assertTrue(buf[1]["payload_bytes"].endswith(CMD_FEED_CUT))
+
+    def test_worker_precuenta_con_mesa_id_sin_pedido_id_de_java(self):
+        """PRB-107/PRB-106: Resuelve pedido activo si Java encola PRECUENTA solo con mesa_id."""
+        t_texto = ImpresionCola.objects.create(
+            pedido=None,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            estacion="CAJA_80MM",
+            payload=f"Mesa {self.mesa5.id} precuenta",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+        t_json = ImpresionCola.objects.create(
+            pedido=None,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            estacion="CAJA_80MM",
+            payload=json.dumps({"mesa_id": self.mesa5.id}),
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+
+        call_command("despachar_impresion", "--once", "--modo", "DUMMY", stdout=io.StringIO())
+
+        t_texto.refresh_from_db()
+        t_json.refresh_from_db()
+        self.assertEqual(t_texto.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(t_texto.pedido_id, self.pedido.id)
+        self.assertIn("CEVICHERIA LA CASA BLANCA", t_texto.payload)
+        self.assertIn("106.00", t_texto.payload)
+
+        self.assertEqual(t_json.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(t_json.pedido_id, self.pedido.id)
+        self.assertIn("OP. GRAVADA", t_json.payload)
+
+    def test_worker_fallo_reintentos_y_transicion_a_fallido(self):
+        """PRB-107: --loop con FAIL_SIMULATED reintenta hasta 3 veces y marca FALLIDO."""
+        trabajo = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            estacion=Producto.ESTACION_COCINA_CALIENTE,
+            payload="Comanda fallo test",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+
+        # 2 ciclos con fallo: sigue PENDIENTE con intentos=2
+        call_command(
+            "despachar_impresion",
+            "--loop",
+            "--max-ciclos",
+            "2",
+            "--intervalo",
+            "0.01",
+            "--modo",
+            "FAIL_SIMULATED",
+            stdout=io.StringIO(),
+        )
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.intentos, 2)
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_PENDIENTE)
+        self.assertIn("Fallo simulado", trabajo.error)
+
+        # 3er intento: pasa a FALLIDO
+        call_command(
+            "despachar_impresion",
+            "--once",
+            "--modo",
+            "FAIL_SIMULATED",
+            stdout=io.StringIO(),
+        )
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.intentos, 3)
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_FALLIDO)
+
+        # 4ta corrida: ya no reintenta un FALLIDO
+        call_command(
+            "despachar_impresion",
+            "--once",
+            "--modo",
+            "DUMMY",
+            stdout=io.StringIO(),
+        )
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.intentos, 3)
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_FALLIDO)
+
+    def test_worker_recuperacion_tras_fallo_transitorio(self):
+        """PRB-107: Un fallo transitorio seguido de reconexión imprime en el intento 2."""
+        trabajo = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            estacion="CAJA",
+            payload="Precuenta recuperacion",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+
+        call_command(
+            "despachar_impresion",
+            "--once",
+            "--modo",
+            "FAIL_SIMULATED",
+            stdout=io.StringIO(),
+        )
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_PENDIENTE)
+        self.assertEqual(trabajo.intentos, 1)
+
+        call_command(
+            "despachar_impresion",
+            "--once",
+            "--modo",
+            "DUMMY",
+            stdout=io.StringIO(),
+        )
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(trabajo.intentos, 2)
+        self.assertIsNone(trabajo.error)
+
+    def test_worker_no_duplica_impresion_si_ya_esta_impreso(self):
+        """PRB-107: despachar_trabajo es idempotente y no vuelve a imprimir un IMPRESO."""
+        trabajo = ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            estacion=Producto.ESTACION_BARRA_FRIA,
+            payload="Comanda idempotente",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+        exito1, _ = despachar_trabajo(trabajo.id, modo="DUMMY")
+        self.assertTrue(exito1)
+        self.assertEqual(len(obtener_buffer_simulado()), 1)
+
+        exito2, msg2 = despachar_trabajo(trabajo.id, modo="DUMMY")
+        self.assertFalse(exito2)
+        self.assertIn("omitido", msg2)
+        self.assertEqual(len(obtener_buffer_simulado()), 1)
+
+    def test_comanda_cocina_general_incluye_todos_y_excluye_anulados(self):
+        """PRB-107: estación COCINA_GENERAL incluye activos y excluye ítems ANULADO."""
+        det_jalea = self.pedido.detalles.get(producto=self.jalea)
+        det_jalea.estado_item = DetallePedido.ESTADO_ITEM_ANULADO
+        det_jalea.save()
+
+        texto = generar_texto_comanda(self.pedido, estacion="COCINA_GENERAL")
+        self.assertIn("CEVICHE NORTEÑO WORKER", texto)
+        self.assertNotIn("JALEA REAL WORKER", texto)
+
+    def test_worker_log_rotativo_y_healthcheck(self):
+        """PRB-108: --loop escribe log rotativo y heartbeat válido; --healthcheck lo valida."""
+        ImpresionCola.objects.create(
+            pedido=self.pedido,
+            tipo=ImpresionCola.TIPO_COMANDA,
+            estacion=Producto.ESTACION_BARRA_FRIA,
+            payload="Comanda monitor",
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "worker.log"
+            health_path = Path(tmpdir) / "health.json"
+
+            call_command(
+                "despachar_impresion",
+                "--loop",
+                "--max-ciclos",
+                "2",
+                "--intervalo",
+                "0.01",
+                "--modo",
+                "DUMMY",
+                "--log-file",
+                str(log_path),
+                "--health-file",
+                str(health_path),
+                stdout=io.StringIO(),
+            )
+
+            self.assertTrue(log_path.exists())
+            log_txt = log_path.read_text(encoding="utf-8")
+            self.assertIn("Worker despachar_impresion iniciado", log_txt)
+            self.assertIn("IMPRESO", log_txt)
+
+            self.assertTrue(health_path.exists())
+            data = json.loads(health_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "ok")
+            self.assertEqual(data["ciclos"], 2)
+            self.assertEqual(data["impresos_total"], 1)
+            self.assertEqual(data["pendientes_en_cola"], 0)
+
+            out_hc = io.StringIO()
+            call_command(
+                "despachar_impresion",
+                "--healthcheck",
+                "--health-file",
+                str(health_path),
+                "--max-age-seconds",
+                "60",
+                stdout=out_hc,
+            )
+            self.assertIn("HEALTHY", out_hc.getvalue())
+
+            # Simular heartbeat obsoleto (> max-age-seconds)
+            viejo = (datetime.now(dt_timezone.utc) - timedelta(seconds=120)).isoformat()
+            data["timestamp_utc"] = viejo
+            health_path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaises(CommandError):
+                call_command(
+                    "despachar_impresion",
+                    "--healthcheck",
+                    "--health-file",
+                    str(health_path),
+                    "--max-age-seconds",
+                    "30",
+                    stdout=io.StringIO(),
+                )
+
+    def test_validacion_flags_y_scripts_devops_prb108(self):
+        """PRB-107/PRB-108: Rechaza --once + --loop y verifica scripts Windows en scripts/."""
+        with self.assertRaises(CommandError):
+            call_command(
+                "despachar_impresion", "--once", "--loop", stdout=io.StringIO()
+            )
+
+        base = settings.BASE_DIR / "scripts" / "impresion"
+        esperados = {
+            "run_worker_impresion.ps1": "despachar_impresion",
+            "healthcheck_worker_impresion.ps1": "--healthcheck",
+            "instalar_servicio_windows.ps1": "run_worker_impresion.ps1",
+        }
+        for nombre, marcador in esperados.items():
+            ruta = base / nombre
+            self.assertTrue(ruta.exists(), f"Falta script DevOps {ruta}")
+            contenido = ruta.read_text(encoding="utf-8")
+            self.assertIn(marcador, contenido)

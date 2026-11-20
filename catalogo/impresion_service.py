@@ -10,7 +10,9 @@ Alcance P-11 (PLAN-PRODUCCION-POS.md §5.2, §8.4, ADR-02):
 - Auditoría, reintentos y reimpresión de comandas y cuentas.
 """
 
+import json
 import os
+import re
 import socket
 from decimal import Decimal
 from django.conf import settings
@@ -56,6 +58,46 @@ CMD_FEED_CUT = GS + b"V\x42\x00"  # Avance y corte de papel (Autocutter)
 
 # Buffer en memoria para pruebas y modo simulado
 BUFFER_IMPRESIONES_SIMULADAS = []
+
+
+def obtener_config_impresora(host=None, port=None, timeout=None, modo=None):
+    """Resuelve dinámicamente la configuración de impresora (args > settings > env > default)."""
+    modo_res = (
+        modo
+        or getattr(settings, "PRINTER_MODE", None)
+        or os.getenv("PRINTER_MODE")
+        or PRINTER_MODE_DEFAULT
+    )
+    host_res = (
+        host
+        or getattr(settings, "PRINTER_HOST", None)
+        or os.getenv("PRINTER_HOST")
+        or PRINTER_HOST_DEFAULT
+    )
+    port_raw = (
+        port
+        if port is not None
+        else (
+            getattr(settings, "PRINTER_PORT", None)
+            or os.getenv("PRINTER_PORT")
+            or PRINTER_PORT_DEFAULT
+        )
+    )
+    timeout_raw = (
+        timeout
+        if timeout is not None
+        else (
+            getattr(settings, "PRINTER_TIMEOUT", None)
+            or os.getenv("PRINTER_TIMEOUT")
+            or PRINTER_TIMEOUT_DEFAULT
+        )
+    )
+    return {
+        "modo": str(modo_res).strip().upper(),
+        "host": str(host_res).strip(),
+        "port": int(port_raw),
+        "timeout": int(timeout_raw),
+    }
 
 
 def limpiar_buffer_simulado():
@@ -164,8 +206,12 @@ def generar_texto_comanda(pedido, estacion=None):
         ]
     )
 
-    detalles = list(pedido.detalles.all())
-    if estacion_codigo:
+    detalles = [
+        d
+        for d in pedido.detalles.select_related("producto").all()
+        if getattr(d, "estado_item", None) != "ANULADO"
+    ]
+    if estacion_codigo and estacion_codigo not in ("COCINA_GENERAL", "TODAS", "GENERAL"):
         detalles = [d for d in detalles if d.producto.estacion == estacion_codigo]
 
     total_platos = 0
@@ -235,7 +281,11 @@ def generar_texto_precuenta(pedido):
         linea_separador("-"),
     ]
 
-    detalles = list(pedido.detalles.all())
+    detalles = [
+        d
+        for d in pedido.detalles.select_related("producto").all()
+        if getattr(d, "estado_item", None) != "ANULADO"
+    ]
     if not detalles:
         lineas.append(centrar("(Sin ítems registrados)"))
     else:
@@ -298,10 +348,11 @@ def enviar_bytes_a_impresora(
 
     Retorna una tupla (exito: bool, mensaje: str).
     """
-    modo_operacion = modo or PRINTER_MODE_DEFAULT
-    host_destino = host or PRINTER_HOST_DEFAULT
-    puerto_destino = port or PRINTER_PORT_DEFAULT
-    timeout_segundos = timeout or PRINTER_TIMEOUT_DEFAULT
+    cfg = obtener_config_impresora(host=host, port=port, timeout=timeout, modo=modo)
+    modo_operacion = cfg["modo"]
+    host_destino = cfg["host"]
+    puerto_destino = cfg["port"]
+    timeout_segundos = cfg["timeout"]
 
     if modo_operacion == "DUMMY":
         # Simulación en memoria para desarrollo y pruebas
@@ -392,34 +443,139 @@ def encolar_precuenta(pedido, despachar_inmediato=True, modo=None):
     return trabajo
 
 
-def despachar_trabajo(trabajo_id, modo=None):
-    """Despacha un trabajo de impresión pendiente con control atómico de reintentos."""
-    with transaction.atomic():
-        try:
-            trabajo = ImpresionCola.objects.select_for_update().get(id=trabajo_id)
-        except ImpresionCola.DoesNotExist:
-            return False, f"Trabajo #{trabajo_id} no existe"
+_PATRON_MESA_ID = re.compile(
+    r"(?:\bmesa_id\s*[:=]\s*|\bmesa\s+#?\s*)(\d+)\b", re.IGNORECASE
+)
+_PATRON_PEDIDO_ID = re.compile(r"\bpedido_id\s*[:=]\s*(\d+)\b", re.IGNORECASE)
 
-        # Generar bytes ESC/POS
-        if trabajo.pedido:
-            if trabajo.tipo == ImpresionCola.TIPO_PRECUENTA:
-                payload_bytes = generar_escpos_precuenta(trabajo.pedido)
-            else:
-                payload_bytes = generar_escpos_comanda(
-                    trabajo.pedido, estacion=trabajo.estacion
+
+def extraer_referencia_payload(payload):
+    """Extrae mesa_id o pedido_id si el payload llega como stub JSON/texto desde Java (PRB-106)."""
+    texto = str(payload or "").strip()
+    if not texto:
+        return None, None
+
+    if texto.startswith("{"):
+        try:
+            data = json.loads(texto)
+            if isinstance(data, dict):
+                pid = data.get("pedido_id") or data.get("pedidoId")
+                mid = data.get("mesa_id") or data.get("mesaId")
+                return (
+                    int(pid) if pid is not None and str(pid).isdigit() else None,
+                    int(mid) if mid is not None and str(mid).isdigit() else None,
                 )
-        else:
-            # Si no hay pedido directo, codificar el payload de texto plano almacenado
+        except (ValueError, TypeError):
+            pass
+
+    match_pedido = _PATRON_PEDIDO_ID.search(texto)
+    pedido_id = int(match_pedido.group(1)) if match_pedido else None
+
+    match_mesa = _PATRON_MESA_ID.search(texto)
+    mesa_id = int(match_mesa.group(1)) if match_mesa else None
+    return pedido_id, mesa_id
+
+
+def resolver_pedido_para_trabajo(trabajo):
+    """Resuelve el Pedido asociado a un trabajo (directo o via mesa_id/pedido_id en payload)."""
+    if trabajo.pedido_id:
+        return trabajo.pedido
+
+    pedido_id, mesa_id = extraer_referencia_payload(trabajo.payload)
+    if pedido_id:
+        pedido = Pedido.objects.select_related("mesa").filter(id=pedido_id).first()
+        if pedido:
+            return pedido
+
+    if mesa_id and trabajo.tipo == ImpresionCola.TIPO_PRECUENTA:
+        activos = (
+            Pedido.objects.select_related("mesa")
+            .filter(mesa_id=mesa_id)
+            .exclude(estado__in=[Pedido.ESTADO_COBRADO, Pedido.ESTADO_ANULADO])
+            .order_by("-fecha_creacion", "-id")
+        )
+        pedido = activos.first()
+        if pedido:
+            return pedido
+        return (
+            Pedido.objects.select_related("mesa")
+            .filter(mesa_id=mesa_id)
+            .exclude(estado=Pedido.ESTADO_ANULADO)
+            .order_by("-fecha_creacion", "-id")
+            .first()
+        )
+
+    return None
+
+
+def _construir_ticket_trabajo(trabajo, pedido):
+    """Genera (texto_plano_o_None, bytes_escpos) para un trabajo en cola."""
+    if pedido:
+        if trabajo.tipo == ImpresionCola.TIPO_PRECUENTA:
+            texto = generar_texto_precuenta(pedido)
             payload_bytes = (
                 CMD_INIT
                 + CMD_ALIGN_LEFT
-                + trabajo.payload.encode("cp850", errors="replace")
+                + texto.encode("cp850", errors="replace")
                 + b"\n\n\n"
                 + CMD_FEED_CUT
             )
+            return texto, payload_bytes
+
+        texto = generar_texto_comanda(pedido, estacion=trabajo.estacion)
+        payload_bytes = (
+            CMD_INIT
+            + CMD_ALIGN_LEFT
+            + texto.encode("cp850", errors="replace")
+            + b"\n\n\n"
+            + CMD_FEED_CUT
+        )
+        return texto, payload_bytes
+
+    payload_bytes = (
+        CMD_INIT
+        + CMD_ALIGN_LEFT
+        + str(trabajo.payload or "").encode("cp850", errors="replace")
+        + b"\n\n\n"
+        + CMD_FEED_CUT
+    )
+    return None, payload_bytes
+
+
+def despachar_trabajo(trabajo_id, modo=None, host=None, port=None, timeout=None):
+    """Despacha un trabajo de impresión pendiente con control atómico de reintentos."""
+    with transaction.atomic():
+        try:
+            trabajo = (
+                ImpresionCola.objects.select_for_update()
+                .select_related("pedido", "pedido__mesa")
+                .get(id=trabajo_id)
+            )
+        except ImpresionCola.DoesNotExist:
+            return False, f"Trabajo #{trabajo_id} no existe"
+
+        if trabajo.estado != ImpresionCola.ESTADO_PENDIENTE:
+            return (
+                False,
+                f"Trabajo #{trabajo_id} omitido (estado actual: {trabajo.estado})",
+            )
+
+        pedido = resolver_pedido_para_trabajo(trabajo)
+        if pedido and not trabajo.pedido_id:
+            trabajo.pedido = pedido
+
+        texto_ticket, payload_bytes = _construir_ticket_trabajo(trabajo, pedido)
+        if texto_ticket and not str(trabajo.payload or "").lstrip().startswith("=" * 10):
+            trabajo.payload = texto_ticket
 
         trabajo.intentos += 1
-        exito, mensaje = enviar_bytes_a_impresora(payload_bytes, modo=modo)
+        exito, mensaje = enviar_bytes_a_impresora(
+            payload_bytes,
+            host=host,
+            port=port,
+            timeout=timeout,
+            modo=modo,
+        )
 
         if exito:
             trabajo.estado = ImpresionCola.ESTADO_IMPRESO
@@ -434,18 +590,32 @@ def despachar_trabajo(trabajo_id, modo=None):
         return exito, mensaje
 
 
-def despachar_cola_pendientes(limite=10, modo=None):
+def despachar_cola_pendientes(
+    limite=10, modo=None, host=None, port=None, timeout=None
+):
     """Despacha en orden FIFO los trabajos que se encuentren en estado PENDIENTE."""
     pendientes = list(
         ImpresionCola.objects.filter(estado=ImpresionCola.ESTADO_PENDIENTE)
-        .order_by("fecha_creacion")[:limite]
+        .order_by("fecha_creacion", "id")[:limite]
         .values_list("id", flat=True)
     )
 
     resultados = []
     for t_id in pendientes:
-        exito, msg = despachar_trabajo(t_id, modo=modo)
-        resultados.append({"id": t_id, "exito": exito, "mensaje": msg})
+        exito, msg = despachar_trabajo(
+            t_id, modo=modo, host=host, port=port, timeout=timeout
+        )
+        trabajo = ImpresionCola.objects.filter(id=t_id).first()
+        resultados.append(
+            {
+                "id": t_id,
+                "tipo": trabajo.tipo if trabajo else None,
+                "estado": trabajo.estado if trabajo else None,
+                "intentos": trabajo.intentos if trabajo else None,
+                "exito": exito,
+                "mensaje": msg,
+            }
+        )
     return resultados
 
 

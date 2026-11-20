@@ -47,3 +47,6 @@ ENV/
 # Local settings
 db.sqlite3
 local_settings.py
+
+# Runtime logs and worker healthcheck files (PRB-108)
+logs/
