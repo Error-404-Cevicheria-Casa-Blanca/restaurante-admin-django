@@ -1,0 +1,79 @@
+name: CI — Panel Django (PRB-112)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+      - "fix/**"
+      - "bugfix/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-django-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-django:
+    name: Flake8, Django Check & Pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Flake8 (full ruleset)
+        run: flake8
+
+      - name: Run Django system check
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings
+          DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+        run: |
+          if [ -z "$DJANGO_SECRET_KEY" ]; then
+            export DJANGO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(50))')"
+          fi
+          python manage.py check
+
+      - name: Run Pytest suite
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings
+          DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+        run: |
+          if [ -z "$DJANGO_SECRET_KEY" ]; then
+            export DJANGO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(50))')"
+          fi
+          pytest -v --junitxml=pytest-report.xml
+
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: django-pytest-report
+          path: pytest-report.xml
+          if-no-files-found: ignore
+          retention-days: 7
