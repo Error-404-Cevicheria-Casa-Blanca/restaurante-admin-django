@@ -48,9 +48,7 @@ if (Test-Path $EnvFile) {
         if ($idx -le 0) { return }
         $clave = $linea.Substring(0, $idx).Trim()
         $valor = $linea.Substring($idx + 1).Trim().Trim('"').Trim("'")
-        if (-not [Environment]::GetEnvironmentVariable($clave, "Process")) {
-            [Environment]::SetEnvironmentVariable($clave, $valor, "Process")
-        }
+        [Environment]::SetEnvironmentVariable($clave, $valor, "Process")
     }
 }
 

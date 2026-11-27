@@ -122,6 +122,7 @@ if ($ModoEfectivo -eq "NSSM") {
         -Principal $Principal `
         -Description "Worker de impresión térmica 80 mm para Cevichería La Casa Blanca (PRB-108)." `
         -Force | Out-Null
+    Stop-ScheduledTask -TaskName $NombreServicio -ErrorAction SilentlyContinue
     Start-ScheduledTask -TaskName $NombreServicio
     Write-Output "[PRB-108] Tarea Programada '$NombreServicio' registrada (AtStartup + auto-reinicio) e iniciada."
 }
