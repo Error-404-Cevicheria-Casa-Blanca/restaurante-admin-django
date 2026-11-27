@@ -97,7 +97,13 @@ _CLAVE_PRUEBAS = "clave-solo-pruebas-subproceso-NO-USAR-en-produccion"
 def _ejecutar_en_subproceso(codigo, entorno_extra):
     """Ejecuta código Python en un proceso limpio, sin variables heredadas."""
     entorno = dict(os.environ)
-    for nombre in ("DJANGO_SECRET_KEY", "DJANGO_DEBUG", *POSTGRES_VARS):
+    for nombre in (
+        "DJANGO_SECRET_KEY",
+        "DJANGO_DEBUG",
+        "DJANGO_CSRF_TRUSTED_ORIGINS",
+        "DJANGO_TRUST_X_FORWARDED_PROTO",
+        *POSTGRES_VARS,
+    ):
         entorno.pop(nombre, None)
     entorno.update(entorno_extra)
     return subprocess.run(
@@ -176,6 +182,30 @@ class ConfiguracionTests(SimpleTestCase):
         self.assertIn("ImproperlyConfigured", salida)
         self.assertIn("DB_HOST", salida)
         self.assertIn("DB_PORT", salida)
+
+    def test_csrf_trusted_origins_y_proxy_ssl_detras_de_caddy(self):
+        """PRB-98: Configura CSRF_TRUSTED_ORIGINS y SECURE_PROXY_SSL_HEADER tras Caddy HTTPS."""
+        codigo = (
+            "import config.settings as s; "
+            "print(s.CSRF_TRUSTED_ORIGINS, getattr(s, 'SECURE_PROXY_SSL_HEADER', None))"
+        )
+        sin_https = _ejecutar_en_subproceso(
+            codigo, {"DJANGO_SECRET_KEY": _CLAVE_PRUEBAS}
+        )
+        self.assertEqual(sin_https.returncode, 0, sin_https.stderr)
+        self.assertEqual(sin_https.stdout.strip(), "[] None")
+
+        con_caddy = _ejecutar_en_subproceso(
+            codigo,
+            {
+                "DJANGO_SECRET_KEY": _CLAVE_PRUEBAS,
+                "DJANGO_CSRF_TRUSTED_ORIGINS": "https://casa-blanca.local, https://192.168.1.10",
+            },
+        )
+        self.assertEqual(con_caddy.returncode, 0, con_caddy.stderr)
+        self.assertIn("https://casa-blanca.local", con_caddy.stdout)
+        self.assertIn("https://192.168.1.10", con_caddy.stdout)
+        self.assertIn("('HTTP_X_FORWARDED_PROTO', 'https')", con_caddy.stdout)
 
 
 # =============================================================================
@@ -3001,3 +3031,36 @@ class WorkerDespacharImpresionTests(TestCase):
             self.assertTrue(ruta.exists(), f"Falta script DevOps {ruta}")
             contenido = ruta.read_text(encoding="utf-8")
             self.assertIn(marcador, contenido)
+
+    def test_despachar_trabajo_sin_outer_join_en_select_for_update_postgresql(self):
+        """PRB-108: select_for_update sobre impresion_cola no usa LEFT JOIN nulable (PostgreSQL)."""
+        pedido_delivery = Pedido.objects.create(
+            mesa=None,
+            mozo_id=self.mozo.id,
+            estado=Pedido.ESTADO_PENDIENTE,
+            total=Decimal("42.00"),
+        )
+        DetallePedido.objects.create(
+            pedido=pedido_delivery,
+            producto=self.ceviche,
+            precio_unitario=Decimal("42.00"),
+            cantidad=1,
+            subtotal=Decimal("42.00"),
+        )
+        trabajo = ImpresionCola.objects.create(
+            pedido=None,
+            tipo=ImpresionCola.TIPO_PRECUENTA,
+            estacion="CAJA",
+            payload=json.dumps({"pedido_id": pedido_delivery.id}),
+            estado=ImpresionCola.ESTADO_PENDIENTE,
+            intentos=0,
+        )
+
+        qs_bloqueo = ImpresionCola.objects.select_for_update().filter(id=trabajo.id)
+        self.assertNotIn("LEFT OUTER JOIN", str(qs_bloqueo.query).upper())
+
+        exito, _ = despachar_trabajo(trabajo.id, modo="DUMMY")
+        self.assertTrue(exito)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.estado, ImpresionCola.ESTADO_IMPRESO)
+        self.assertEqual(trabajo.pedido_id, pedido_delivery.id)

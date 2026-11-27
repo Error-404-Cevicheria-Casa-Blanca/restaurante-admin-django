@@ -48,6 +48,20 @@ ALLOWED_HOSTS = [
     if host.strip()
 ]
 
+# --- Orígenes confiables CSRF y proxy reverso HTTPS (PRB-98 / Caddy TLS) ----
+# Lista separada por coma con esquema explícito:
+# DJANGO_CSRF_TRUSTED_ORIGINS="https://casa-blanca.local,https://192.168.1.10"
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+if os.environ.get("DJANGO_TRUST_X_FORWARDED_PROTO", "") == "1" or any(
+    origin.startswith("https://") for origin in CSRF_TRUSTED_ORIGINS
+):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Application definition
 
 INSTALLED_APPS = [

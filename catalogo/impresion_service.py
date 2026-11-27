@@ -479,7 +479,11 @@ def extraer_referencia_payload(payload):
 def resolver_pedido_para_trabajo(trabajo):
     """Resuelve el Pedido asociado a un trabajo (directo o via mesa_id/pedido_id en payload)."""
     if trabajo.pedido_id:
-        return trabajo.pedido
+        return (
+            Pedido.objects.select_related("mesa")
+            .filter(id=trabajo.pedido_id)
+            .first()
+        )
 
     pedido_id, mesa_id = extraer_referencia_payload(trabajo.payload)
     if pedido_id:
@@ -546,11 +550,9 @@ def despachar_trabajo(trabajo_id, modo=None, host=None, port=None, timeout=None)
     """Despacha un trabajo de impresión pendiente con control atómico de reintentos."""
     with transaction.atomic():
         try:
-            trabajo = (
-                ImpresionCola.objects.select_for_update()
-                .select_related("pedido", "pedido__mesa")
-                .get(id=trabajo_id)
-            )
+            # Bloquear solo impresion_cola (sin select_related sobre FKs nulables,
+            # ya que PostgreSQL rechaza FOR UPDATE sobre LEFT OUTER JOIN).
+            trabajo = ImpresionCola.objects.select_for_update().get(id=trabajo_id)
         except ImpresionCola.DoesNotExist:
             return False, f"Trabajo #{trabajo_id} no existe"
 

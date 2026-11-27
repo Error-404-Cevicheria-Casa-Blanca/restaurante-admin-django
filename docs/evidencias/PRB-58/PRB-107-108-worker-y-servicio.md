@@ -60,5 +60,16 @@ python manage.py despachar_impresion --once --modo NETWORK --host 192.168.1.200 
 | Instalador Windows (Dry-Run) | `.\scripts\impresion\instalar_servicio_windows.ps1 -DryRun` | `EXIT=0` (`Modo: TaskScheduler`) |
 | Runner + Healthcheck real | `run_worker_impresion.ps1 -Once -Modo DUMMY` + `healthcheck_worker_impresion.ps1` | `HEALTHY \| modo=DUMMY \| ciclos=1 \| pendientes=0` (`EXIT=0`) |
 
+---
+
+## 4. Instalación Real en Windows y Validación contra PostgreSQL (`2026-11-27`)
+
+- **Despliegue real en Windows Task Scheduler (ejecutado como Administrador):**
+  - Se ejecutó `instalar_servicio_windows.ps1` registrando e iniciando `CasaBlancaImpresionWorker` (`AtStartup`, `SYSTEM`, `RestartCount=999`, `RestartInterval=1 min`, `Stop-ScheduledTask` previo para recarga limpia) y `CasaBlancaImpresionWorker_Healthcheck` (cada `5 min` con `-RestartOnFailure`).
+- **Corrección de bloqueo `FOR UPDATE` sobre PostgreSQL (`impresion_service.py`):**
+  - En PostgreSQL real (`casablanca` `:5432`), `select_for_update()` combinado con `select_related("pedido", "pedido__mesa")` sobre llaves foráneas nulables generaba `LEFT OUTER JOIN ... FOR UPDATE` (`FeatureNotSupported`). Se desacopló `ImpresionCola.objects.select_for_update().get(id=trabajo_id)` del `select_related`, quedando cubierto con test de regresión (`88 passed, 4 subtests passed` en `pytest`).
+- **Compatibilidad HTTPS detrás de Caddy (`PRB-98`):**
+  - Se incorporó `DJANGO_CSRF_TRUSTED_ORIGINS` y `SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")` en `config/settings.py` para permitir formularios `POST` del panel y KDS a través de `https://casa-blanca.local`.
+
 ### Nota de alcance hacia PRB-110
 - La verificación física de papel en la impresora **Epson TM-T20III** (comanda por estación + pre-cuenta real originadas desde la tablet y Java `PRB-106`) corresponde a la subtarea **`PRB-110`**.
